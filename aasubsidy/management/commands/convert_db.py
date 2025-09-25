@@ -31,86 +31,100 @@ class Command(BaseCommand):
             default=1000,
             help="Batch size for upserts.",
         )
+        parser.add_argument(
+            "--external-table",
+            type=str,
+            default="corptools.corporatecontracts",
+            help="Fully-qualified source table for custom fields (schema.table).",
+        )
 
     def handle(self, *args, **options):
         dry_run: bool = bool(options.get("dry_run"))
         chunk_size: int = int(options.get("chunk_size") or 1000)
+        external_table: str = str(options.get("external_table") or "corptools.corporatecontracts")
 
+        # 1) sync_fitting_requests (wait)
         self.stdout.write(self.style.MIGRATE_HEADING("Step 1/4: Sync fitting requests (wait)…"))
         res1 = sync_fitting_requests.apply(args=[], kwargs={}).get(disable_sync_subtasks=False)
         self.stdout.write(self.style.SUCCESS(f"Fitting requests synced: {res1}"))
 
+        # 2) seed_all_types_into_subsidy (wait)
         self.stdout.write(self.style.MIGRATE_HEADING("Step 2/4: Seed all EveTypes into SubsidyItemPrice (wait)…"))
         res2 = seed_all_types_into_subsidy.apply(args=[], kwargs={}).get(disable_sync_subtasks=False)
         self.stdout.write(self.style.SUCCESS(f"Seed complete: {res2}"))
 
+        # 3) refresh_subsidy_item_prices (do not wait for inner update)
         self.stdout.write(self.style.MIGRATE_HEADING("Step 3/4: Queue price refresh (no wait for inner task)…"))
         res3 = refresh_subsidy_item_prices.apply(args=[], kwargs={}).get(disable_sync_subtasks=False)
         self.stdout.write(self.style.SUCCESS(f"Price refresh queued: {res3}"))
 
+        # 4) import/merge contract subsidy data
         self.stdout.write(self.style.MIGRATE_HEADING("Step 4/4: Import Corporate Contracts into Subsidy (upsert)…"))
-        created, updated, exempted = self._import_contracts_into_subsidy(dry_run=dry_run, chunk_size=chunk_size)
+        created, updated, exempted = self._import_contracts_into_subsidy(
+            external_table=external_table, dry_run=dry_run, chunk_size=chunk_size
+        )
         suffix = " (dry-run)" if dry_run else ""
-        self.stdout.write(self.style.SUCCESS(f"Contracts imported{suffix}: created={created}, updated={updated}, exempted={exempted}"))
+        self.stdout.write(self.style.SUCCESS(
+            f"Contracts imported{suffix}: created={created}, updated={updated}, exempted={exempted}"
+        ))
         self.stdout.write(self.style.SUCCESS("All done."))
 
-    def _fetch_custom_contract_fields(self, contract_ids):
+    def _fetch_custom_contract_fields(self, contract_ids, external_table: str):
         """
-        Fetch custom fields from the corptools.corporatecontracts table directly via SQL:
-        - review_status (int)
-        - subsidy_amount (decimal)
-        - paid (bool/int)
-        - reason (text)
+        Fetch custom fields from the given external table via SQL:
+          review_status (int), subsidy_amount (decimal), paid (bool/int), reason (text)
 
-        Returns a dict: {contract_id(pk in corptools.models): (review_status, subsidy_amount, paid, reason)}
+        Returns dict: {pk_id: (review_status, subsidy_amount, paid, reason)}
+
+        Notes:
+        - Falls back silently if SELECT is not permitted, returning empty dict.
+        - Expects to JOIN by primary key id equality between Django model table and external table.
         """
         if not contract_ids:
             return {}
 
-        # Using the PK IDs; translate to contract_id PK values passed in list for WHERE IN
-        # We rely on the DB table name being 'corptools_corporatecontract' by Django convention for the model,
-        # but the user stated data is in 'corptools.corporatecontracts' (schema.table). Use that explicitly.
-        # Adjust the schema/table name below to match the actual source table that holds the custom columns.
-        table = 'corptools.corporatecontracts'
-
         results = {}
-        # Chunk IN clause to avoid parameter limits
         BATCH = 1000
-        with connection.cursor() as cursor:
-            for i in range(0, len(contract_ids), BATCH):
-                batch = contract_ids[i : i + BATCH]
-                placeholders = ",".join(["%s"] * len(batch))
-                # Map CorporateContract PK -> custom fields by joining on id (PK)
-                # If the external table uses a different PK, adjust JOIN/WHERE accordingly.
-                sql = f"""
-                    SELECT cc.id as pk_id,
-                           ext.review_status,
-                           ext.subsidy_amount,
-                           ext.paid,
-                           ext.reason
-                    FROM corptools_corporatecontract cc
-                    JOIN {table} ext ON ext.id = cc.id
-                    WHERE cc.id IN ({placeholders})
-                """
-                cursor.execute(sql, batch)
-                for row in cursor.fetchall():
-                    pk_id = int(row[0])
-                    review_status = int(row[1] or 0)
-                    try:
-                        subsidy_amount = Decimal(row[2] or 0)
-                    except Exception:
-                        subsidy_amount = Decimal(0)
-                    paid = bool(row[3] or False)
-                    reason = str(row[4] or "")
-                    results[pk_id] = (review_status, subsidy_amount, paid, reason)
+
+        try:
+            with connection.cursor() as cursor:
+                for i in range(0, len(contract_ids), BATCH):
+                    batch = contract_ids[i : i + BATCH]
+                    placeholders = ",".join(["%s"] * len(batch))
+                    sql = f"""
+                        SELECT cc.id AS pk_id,
+                               ext.review_status,
+                               ext.subsidy_amount,
+                               ext.paid,
+                               ext.reason
+                        FROM corptools_corporatecontract cc
+                        JOIN {external_table} ext ON ext.id = cc.id
+                        WHERE cc.id IN ({placeholders})
+                    """
+                    cursor.execute(sql, batch)
+                    for row in cursor.fetchall():
+                        pk_id = int(row[0])
+                        review_status = int(row[1] or 0)
+                        try:
+                            subsidy_amount = Decimal(row[2] or 0)
+                        except Exception:
+                            subsidy_amount = Decimal(0)
+                        paid = bool(row[3] or False)
+                        reason = str(row[4] or "")
+                        results[pk_id] = (review_status, subsidy_amount, paid, reason)
+        except Exception as e:
+            # Permission or table errors: warn and proceed with empty results
+            logger.warning("Skipping external custom field import due to error: %s", e)
+            return {}
+
         return results
 
-    def _import_contracts_into_subsidy(self, *, dry_run: bool, chunk_size: int):
+    def _import_contracts_into_subsidy(self, *, external_table: str, dry_run: bool, chunk_size: int):
         """
         Upsert CorporateContractSubsidy for all CorporateContract rows.
         - Create missing subsidy rows.
-        - Update review_status, subsidy_amount, paid, reason from custom source table via raw SQL.
-        - Maintain exempt like before: deleted and not yet expired => exempt=True.
+        - Update review_status, subsidy_amount, paid, reason from external source table via raw SQL when accessible.
+        - Maintain exempt: deleted and not yet expired => exempt=True.
         """
         qs = CorporateContract.objects.all().only("id", "status", "date_expired")
         ids = list(qs.values_list("id", flat=True))
@@ -123,14 +137,14 @@ class Command(BaseCommand):
             )
         }
 
+        now = timezone.now()
         created = 0
         updated = 0
         to_create = []
         to_update = []
-        now = timezone.now()
 
-        # Fetch all custom field values in one go (chunked inside)
-        custom_map = self._fetch_custom_contract_fields(ids)
+        # Try to load custom fields; if denied, returns {}
+        custom_map = self._fetch_custom_contract_fields(ids, external_table)
 
         for i in range(0, total, chunk_size):
             batch = list(
@@ -140,14 +154,13 @@ class Command(BaseCommand):
             )
             for cc in batch:
                 existing = existing_map.get(cc.id)
-                # default values if not found in custom source
+
+                # Defaults if custom fields are unavailable for this contract
                 review_status, subsidy_amount, paid, reason = custom_map.get(
                     cc.id, (0, Decimal("0"), False, "")
                 )
 
-                exempt_flag = False
-                if cc.status == "deleted" and cc.date_expired is not None and cc.date_expired > now:
-                    exempt_flag = True
+                exempt_flag = cc.status == "deleted" and cc.date_expired is not None and cc.date_expired > now
 
                 if existing is None:
                     obj = CorporateContractSubsidy(
@@ -177,7 +190,6 @@ class Command(BaseCommand):
                     if existing.exempt != exempt_flag:
                         existing.exempt = exempt_flag
                         changed = True
-
                     if changed:
                         to_update.append(existing)
                         updated += 1
@@ -198,4 +210,3 @@ class Command(BaseCommand):
 
         exempted = CorporateContractSubsidy.objects.filter(contract_id__in=ids, exempt=True).count()
         return created, updated, exempted
-
