@@ -56,12 +56,14 @@
               <td class="text-end text-success">{{ r.approved_paid|intcomma }}</td>
               <td class="text-end fw-semibold">{{ r.total_approved|intcomma }}</td>
               <td class="text-center">
-                <button type="button"
-                        class="btn btn-sm btn-outline-success mark-paid-btn"
-                        data-character="{{ r.character }}"
-                        {% if r.approved_unpaid|default:0 <= 0 %}disabled{% endif %}>
-                  {% trans "Mark as Paid" %}
-                </button>
+                  {% if perms.aasubsidy.subsidy_admin %}
+                    <button type="button"
+                            class="btn btn-sm btn-outline-success mark-paid-btn"
+                            data-character="{{ r.character }}"
+                            {% if r.approved_unpaid|default:0 <= 0 %}disabled{% endif %}>
+                      {% trans "Mark as Paid" %}
+                    </button>
+                  {% endif %}
               </td>
             </tr>
             {% empty %}

@@ -30,12 +30,15 @@
         </li>
         {% endif %}
 
-        {% if perms.aasubsidy.subsidy_admin %}
+        {% if perms.aasubsidy.basic_access %}
         <li class="nav-item">
             <a class="nav-link {% if request.resolver_match.url_name == 'payments' %}active{% endif %}"
                href="{% url 'aasubsidy:payments' %}">
                 {% trans "Payments" %}</a>
         </li>
+        {% endif %}
+
+        {% if perms.aasubsidy.subsidy_admin %}
         <li class="nav-item ms-auto">
             <a class="nav-link {% if request.resolver_match.url_name in 'doctrine_admin doctrine_detail' %}active{% endif %}"
                href="{% url 'aasubsidy:doctrine_admin' %}">

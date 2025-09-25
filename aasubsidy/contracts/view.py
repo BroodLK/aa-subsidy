@@ -53,7 +53,9 @@ class MainView(PermissionRequiredMixin, TemplateView):
         return ctx
 
 @method_decorator(csrf_exempt, name="dispatch")
-class SaveClaimView(LoginRequiredMixin, View):
+class SaveClaimView(PermissionRequiredMixin, View):
+    permission_required = "aasubsidy.basic_access"
+
     def post(self, request):
         try:
             import json
@@ -169,7 +171,9 @@ class DenyView(PermissionRequiredMixin, View):
         return JsonResponse({"ok": True, "review_status": "Rejected", "subsidy_amount": str(meta.subsidy_amount)})
 
 @method_decorator(csrf_exempt, name="dispatch")
-class SaveTablePreferenceView(LoginRequiredMixin, View):
+class SaveTablePreferenceView(PermissionRequiredMixin, View):
+    permission_required = "aasubsidy.basic_access"
+
     def post(self, request):
         try:
             import json
@@ -193,7 +197,7 @@ class SaveTablePreferenceView(LoginRequiredMixin, View):
 
 class PaymentsView(PermissionRequiredMixin, TemplateView):
     template_name = "contracts/payments.html"
-    permission_required = "aasubsidy.review_subsidy"
+    permission_required = "aasubsidy.basic_access"
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -204,7 +208,7 @@ class PaymentsView(PermissionRequiredMixin, TemplateView):
 
 @method_decorator(csrf_exempt, name="dispatch")
 class MarkPaidView(PermissionRequiredMixin, View):
-    permission_required = "aasubsidy.review_subsidy"
+    permission_required = "aasubsidy.subsidy_admin"
 
     def post(self, request):
         name = (request.POST.get("character") or "").strip()
