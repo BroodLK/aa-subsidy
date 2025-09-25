@@ -95,7 +95,7 @@ class ReviewerView(PermissionRequiredMixin, TemplateView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         end = timezone.now()
-        start = end - timedelta(days=3000)
+        start = end - timedelta(days=30)
         ctx["contracts"] = reviewer_table(start, end, corporation_id=1)
         if self.request.user.is_authenticated:
             pref = UserTablePreference.objects.filter(user=self.request.user, table_key="contracts").first()
