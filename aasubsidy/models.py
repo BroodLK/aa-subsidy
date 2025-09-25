@@ -57,6 +57,16 @@ class CorporateContractSubsidy(models.Model):
             models.UniqueConstraint(fields=["contract"], name="uniq_subsidy_per_contract"),
             models.CheckConstraint(check=models.Q(contract__corporation_id=1), name="only_corp_1_contracts"),
         ]
+        indexes = [
+            models.Index(fields=["review_status"], name="ccs_review_status_idx"),
+            models.Index(fields=["paid"], name="ccs_paid_idx"),
+            models.Index(fields=["exempt"], name="ccs_exempt_idx"),
+            models.Index(fields=["subsidy_amount"], name="ccs_subsidy_amount_idx"),
+            models.Index(fields=["reason"], name="ccs_reason_idx"),
+            models.Index(fields=["exempt"], name="ccs_exempt_idx"),
+            models.Index(fields=["contract", "paid", "review_status", "subsidy_amount", "reason"], name="ccs_contract_paid_status_idx"),
+            models.Index(fields=["paid", "review_status", "subsidy_amount", "exempt"], name="ccs_contract_exempt_status_idx"),
+        ]
 
     @property
     def review_status_label(self) -> str:
