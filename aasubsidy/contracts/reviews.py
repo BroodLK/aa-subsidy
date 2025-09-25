@@ -194,6 +194,7 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
             "aasubsidy_meta__reason", "aasubsidy_meta__paid",
             "min_basis", "suggested_subsidy",
         )
+        .distinct()
     )
 
     rows = []
