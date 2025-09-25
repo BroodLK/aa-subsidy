@@ -5,7 +5,7 @@ from fittings.models import Fitting, FittingItem
 from corptools.models import CorporateContract, CorporateContractItem
 from .summaries import INCR
 from ..helpers.db import Ceil, Round
-from ..models import SubsidyItemPrice, SubsidyConfig
+from ..models import SubsidyItemPrice, SubsidyConfig, CorporateContractSubsidy
 from decimal import Decimal
 from django.db.models import DecimalField
 from eveuniverse.models import EveType
@@ -69,9 +69,23 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
     price_field = "sell" if cfg["basis"] == "sell" else "buy"
     incr_val = cfg["incr"]
 
-    base_contracts = CorporateContract.objects.filter(date_issued__gte=start, date_issued__lte=end)
+    base_subsidies = (
+        CorporateContractSubsidy.objects
+        .select_related(
+            "contract__issuer_name",
+            "contract__start_location_name",
+            "contract",
+        )
+        .filter(
+            contract__date_issued__gte=start,
+            contract__date_issued__lte=end,
+        )
+    )
     if corporation_id is not None:
-        base_contracts = base_contracts.filter(corporation_id=corporation_id)
+        base_subsidies = base_subsidies.filter(contract__corporation_id=corporation_id)
+
+    # We still need to perform per-contract calculations; reference contracts by the subsidies' FK
+    base_contracts = CorporateContract.objects.filter(pk__in=base_subsidies.values("contract_id"))
 
     ci_qty = (
         CorporateContractItem.objects
