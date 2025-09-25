@@ -2,7 +2,7 @@ import logging
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from aasubsidy.tasks import (
@@ -25,62 +25,96 @@ class Command(BaseCommand):
             action="store_true",
             help="Do not write any changes to the DB for the contract subsidy import (still runs syncing tasks).",
         )
+        parser.add_argument(
+            "--chunk-size",
+            type=int,
+            default=1000,
+            help="Batch size for upserts.",
+        )
 
     def handle(self, *args, **options):
         dry_run: bool = bool(options.get("dry_run"))
+        chunk_size: int = int(options.get("chunk_size") or 1000)
 
-        self.stdout.write(self.style.MIGRATE_HEADING("Step 1/4: Sync fitting requests (wait to finish)…"))
-        try:
-            # Run synchronously to completion
-            res1 = sync_fitting_requests.apply(args=[], kwargs={}).get(disable_sync_subtasks=False)
-            self.stdout.write(self.style.SUCCESS(f"Fitting requests synced: {res1}"))
-        except Exception as e:
-            self.stdout.write(self.style.ERROR(f"Failed syncing fitting requests: {e}"))
-            raise
+        self.stdout.write(self.style.MIGRATE_HEADING("Step 1/4: Sync fitting requests (wait)…"))
+        res1 = sync_fitting_requests.apply(args=[], kwargs={}).get(disable_sync_subtasks=False)
+        self.stdout.write(self.style.SUCCESS(f"Fitting requests synced: {res1}"))
 
-        self.stdout.write(self.style.MIGRATE_HEADING("Step 2/4: Seed all EveTypes into SubsidyItemPrice (wait to finish)…"))
-        try:
-            res2 = seed_all_types_into_subsidy.apply(args=[], kwargs={}).get(disable_sync_subtasks=False)
-            self.stdout.write(self.style.SUCCESS(f"Seed complete: {res2}"))
-        except Exception as e:
-            self.stdout.write(self.style.ERROR(f"Failed seeding types: {e}"))
-            raise
+        self.stdout.write(self.style.MIGRATE_HEADING("Step 2/4: Seed all EveTypes into SubsidyItemPrice (wait)…"))
+        res2 = seed_all_types_into_subsidy.apply(args=[], kwargs={}).get(disable_sync_subtasks=False)
+        self.stdout.write(self.style.SUCCESS(f"Seed complete: {res2}"))
 
-        self.stdout.write(self.style.MIGRATE_HEADING("Step 3/4: Queue price refresh (not waiting to finish)…"))
-        try:
-            # Execute the wrapper task to enqueue update_all_prices; do not block on the inner task
-            res3 = refresh_subsidy_item_prices.apply(args=[], kwargs={}).get(disable_sync_subtasks=False)
-            self.stdout.write(self.style.SUCCESS(f"Price refresh queued: {res3}"))
-        except Exception as e:
-            self.stdout.write(self.style.ERROR(f"Failed to queue price refresh: {e}"))
-            raise
+        self.stdout.write(self.style.MIGRATE_HEADING("Step 3/4: Queue price refresh (no wait for inner task)…"))
+        res3 = refresh_subsidy_item_prices.apply(args=[], kwargs={}).get(disable_sync_subtasks=False)
+        self.stdout.write(self.style.SUCCESS(f"Price refresh queued: {res3}"))
 
         self.stdout.write(self.style.MIGRATE_HEADING("Step 4/4: Import Corporate Contracts into Subsidy (upsert)…"))
-        try:
-            created, updated, exempted = self._import_contracts_into_subsidy(dry_run=dry_run)
-            suffix = " (dry-run)" if dry_run else ""
-            self.stdout.write(self.style.SUCCESS(f"Contracts imported{suffix}: created={created}, updated={updated}, exempted={exempted}"))
-        except Exception as e:
-            self.stdout.write(self.style.ERROR(f"Failed importing contracts: {e}"))
-            raise
-
+        created, updated, exempted = self._import_contracts_into_subsidy(dry_run=dry_run, chunk_size=chunk_size)
+        suffix = " (dry-run)" if dry_run else ""
+        self.stdout.write(self.style.SUCCESS(f"Contracts imported{suffix}: created={created}, updated={updated}, exempted={exempted}"))
         self.stdout.write(self.style.SUCCESS("All done."))
 
-    def _import_contracts_into_subsidy(self, *, dry_run: bool = False, chunk_size: int = 1000):
+    def _fetch_custom_contract_fields(self, contract_ids):
         """
-        Upsert CorporateContractSubsidy records for all CorporateContract rows.
-        - Create missing subsidy rows.
-        - Update review_status, subsidy_amount, paid, reason from CorporateContract fields.
-        - Apply 'exempt' flag consistency similar to existing logic: mark deleted and not expired as exempt.
-        """
-        qs = CorporateContract.objects.all().only(
-            "id", "status", "date_expired", "review_status", "subsidy_amount", "paid", "reason"
-        )
+        Fetch custom fields from the corptools.corporatecontracts table directly via SQL:
+        - review_status (int)
+        - subsidy_amount (decimal)
+        - paid (bool/int)
+        - reason (text)
 
+        Returns a dict: {contract_id(pk in corptools.models): (review_status, subsidy_amount, paid, reason)}
+        """
+        if not contract_ids:
+            return {}
+
+        # Using the PK IDs; translate to contract_id PK values passed in list for WHERE IN
+        # We rely on the DB table name being 'corptools_corporatecontract' by Django convention for the model,
+        # but the user stated data is in 'corptools.corporatecontracts' (schema.table). Use that explicitly.
+        # Adjust the schema/table name below to match the actual source table that holds the custom columns.
+        table = 'corptools.corporatecontracts'
+
+        results = {}
+        # Chunk IN clause to avoid parameter limits
+        BATCH = 1000
+        with connection.cursor() as cursor:
+            for i in range(0, len(contract_ids), BATCH):
+                batch = contract_ids[i : i + BATCH]
+                placeholders = ",".join(["%s"] * len(batch))
+                # Map CorporateContract PK -> custom fields by joining on id (PK)
+                # If the external table uses a different PK, adjust JOIN/WHERE accordingly.
+                sql = f"""
+                    SELECT cc.id as pk_id,
+                           ext.review_status,
+                           ext.subsidy_amount,
+                           ext.paid,
+                           ext.reason
+                    FROM corptools_corporatecontract cc
+                    JOIN {table} ext ON ext.id = cc.id
+                    WHERE cc.id IN ({placeholders})
+                """
+                cursor.execute(sql, batch)
+                for row in cursor.fetchall():
+                    pk_id = int(row[0])
+                    review_status = int(row[1] or 0)
+                    try:
+                        subsidy_amount = Decimal(row[2] or 0)
+                    except Exception:
+                        subsidy_amount = Decimal(0)
+                    paid = bool(row[3] or False)
+                    reason = str(row[4] or "")
+                    results[pk_id] = (review_status, subsidy_amount, paid, reason)
+        return results
+
+    def _import_contracts_into_subsidy(self, *, dry_run: bool, chunk_size: int):
+        """
+        Upsert CorporateContractSubsidy for all CorporateContract rows.
+        - Create missing subsidy rows.
+        - Update review_status, subsidy_amount, paid, reason from custom source table via raw SQL.
+        - Maintain exempt like before: deleted and not yet expired => exempt=True.
+        """
+        qs = CorporateContract.objects.all().only("id", "status", "date_expired")
         ids = list(qs.values_list("id", flat=True))
         total = len(ids)
-        created = 0
-        updated = 0
 
         existing_map = {
             s.contract_id: s
@@ -89,19 +123,28 @@ class Command(BaseCommand):
             )
         }
 
+        created = 0
+        updated = 0
         to_create = []
         to_update = []
-
         now = timezone.now()
+
+        # Fetch all custom field values in one go (chunked inside)
+        custom_map = self._fetch_custom_contract_fields(ids)
 
         for i in range(0, total, chunk_size):
             batch = list(
                 CorporateContract.objects.filter(id__in=ids[i : i + chunk_size]).only(
-                    "id", "status", "date_expired", "review_status", "subsidy_amount", "paid", "reason"
+                    "id", "status", "date_expired"
                 )
             )
             for cc in batch:
                 existing = existing_map.get(cc.id)
+                # default values if not found in custom source
+                review_status, subsidy_amount, paid, reason = custom_map.get(
+                    cc.id, (0, Decimal("0"), False, "")
+                )
+
                 exempt_flag = False
                 if cc.status == "deleted" and cc.date_expired is not None and cc.date_expired > now:
                     exempt_flag = True
@@ -109,37 +152,28 @@ class Command(BaseCommand):
                 if existing is None:
                     obj = CorporateContractSubsidy(
                         contract_id=cc.id,
-                        review_status=int(cc.review_status or 0),
-                        subsidy_amount=Decimal(cc.subsidy_amount or 0),
-                        paid=bool(cc.paid or False),
-                        reason=str(cc.reason or ""),
+                        review_status=review_status,
+                        subsidy_amount=subsidy_amount,
+                        paid=paid,
+                        reason=reason,
                         exempt=exempt_flag,
                     )
                     to_create.append(obj)
                     created += 1
                 else:
                     changed = False
-
-                    new_review_status = int(cc.review_status or 0)
-                    if existing.review_status != new_review_status:
-                        existing.review_status = new_review_status
+                    if existing.review_status != review_status:
+                        existing.review_status = review_status
                         changed = True
-
-                    new_subsidy_amount = Decimal(cc.subsidy_amount or 0)
-                    if existing.subsidy_amount != new_subsidy_amount:
-                        existing.subsidy_amount = new_subsidy_amount
+                    if existing.subsidy_amount != subsidy_amount:
+                        existing.subsidy_amount = subsidy_amount
                         changed = True
-
-                    new_paid = bool(cc.paid or False)
-                    if existing.paid != new_paid:
-                        existing.paid = new_paid
+                    if existing.paid != paid:
+                        existing.paid = paid
                         changed = True
-
-                    new_reason = str(cc.reason or "")
-                    if existing.reason != new_reason:
-                        existing.reason = new_reason
+                    if existing.reason != reason:
+                        existing.reason = reason
                         changed = True
-
                     if existing.exempt != exempt_flag:
                         existing.exempt = exempt_flag
                         changed = True
@@ -149,23 +183,19 @@ class Command(BaseCommand):
                         updated += 1
 
         if dry_run:
-            return created, updated, sum(1 for obj in to_create if obj.exempt) + sum(1 for obj in to_update if obj.exempt)
+            exempted = sum(1 for obj in to_create if obj.exempt) + sum(1 for obj in to_update if obj.exempt)
+            return created, updated, exempted
 
-        # Persist in chunks
         if to_create:
             with transaction.atomic():
                 CorporateContractSubsidy.objects.bulk_create(to_create, ignore_conflicts=True)
 
         if to_update:
-            # Update only the mapped fields
             with transaction.atomic():
                 CorporateContractSubsidy.objects.bulk_update(
                     to_update, ["review_status", "subsidy_amount", "paid", "reason", "exempt"]
                 )
 
-        exempted = CorporateContractSubsidy.objects.filter(
-            contract_id__in=ids, exempt=True
-        ).count()
-
+        exempted = CorporateContractSubsidy.objects.filter(contract_id__in=ids, exempt=True).count()
         return created, updated, exempted
 
