@@ -85,7 +85,8 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
         base_subsidies = base_subsidies.filter(contract__corporation_id=corporation_id)
 
     # We still need to perform per-contract calculations; reference contracts by the subsidies' FK
-    base_contracts = CorporateContract.objects.filter(pk__in=base_subsidies.values("contract_id"))
+    base_contracts = CorporateContract.objects.filter(pk__in=base_subsidies.values("contract_id"),
+                                                      corporation_id=corporation_id if corporation_id is not None else F("corporation_id"))
 
     ci_qty = (
         CorporateContractItem.objects

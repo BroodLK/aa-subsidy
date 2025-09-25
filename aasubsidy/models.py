@@ -55,6 +55,7 @@ class CorporateContractSubsidy(models.Model):
         verbose_name_plural = "Corporate Contract Subsidies"
         constraints = [
             models.UniqueConstraint(fields=["contract"], name="uniq_subsidy_per_contract"),
+            models.CheckConstraint(check=models.Q(contract__corporation_id=1), name="only_corp_1_contracts"),
         ]
 
     @property

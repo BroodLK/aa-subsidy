@@ -136,14 +136,15 @@ def mark_all_unpaid_for_main_as_paid(main_character_name: str) -> int:
                 if entity_ids:
                     contract_pk_set.update(
                         CorporateContract.objects.filter(
-                            issuer_name_id__in=list(entity_ids)
+                            issuer_name_id__in=list(entity_ids),
+                            corporation_id=1,
                         ).values_list("pk", flat=True)
                     )
 
         if not contract_pk_set:
             contract_pk_set.update(
                 CorporateContract.objects.filter(
-                    issuer_name__name=main_character_name
+                    issuer_name__name=main_character_name, corporation_id=1
                 ).values_list("pk", flat=True)
             )
 
