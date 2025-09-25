@@ -1,0 +1,173 @@
+{% extends 'contracts/base.html' %}
+{% load i18n humanize %}
+
+{% block details %}
+<div class="container-xxl py-3">
+  <div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <h3 class="m-0">{% trans "Subsidy Payments" %}</h3>
+    </div>
+    <div class="card-body p-2">
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0 table-bordered">
+          <thead class="table-dark">
+            <tr class="text-center">
+              <th scope="col">{% trans "Character" %}</th>
+              <th scope="col">{% trans "Approved Not Paid (ISK)" %}</th>
+              <th scope="col">{% trans "Approved Paid (ISK)" %}</th>
+              <th scope="col">{% trans "Total Approved (ISK)" %}</th>
+              <th scope="col">{% trans "Actions" %}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+            <tr>
+              <td>
+                {{ r.character }}
+                <span class="copyable" data-copy="{{ r.character }}" title="{% trans 'Click to copy' %}">
+                  <i class="fa fa-copy ms-1 text-secondary"></i>
+                </span>
+              </td>
+              <td class="text-end">
+                <div class="text-white">
+                  {{ r.approved_unpaid|intcomma }}
+                  <span class="copyable" data-copy="{{ r.approved_unpaid }}" title="{% trans 'Click to copy' %}">
+                    <i class="fa fa-copy ms-1 text-secondary"></i>
+                  </span>
+                </div>
+
+                {% if r.exempt_unpaid|default:0 > 0 %}
+                <div class="small text-warning">
+                  <i class="fa fa-question-circle" data-bs-toggle="tooltip" data-bs-placement="left"
+                     title="{% trans 'Total exempt excluded (deleted before expiration)' %}"></i>
+                  <span class="ms-1">-{{ r.exempt_unpaid|intcomma }}</span>
+                </div>
+                {% endif %}
+
+                {% if r.exempt_paid_negative_abs|default:0 > 0 %}
+                <div class="small text-danger">
+                  <i class="fa fa-question-circle" data-bs-toggle="tooltip" data-bs-placement="left"
+                     title="{% trans 'Total deducted (already paid but deleted before expiration)' %}"></i>
+                  <span class="ms-1">-{{ r.exempt_paid_negative_abs|intcomma }}</span>
+                </div>
+                {% endif %}
+
+              </td>
+              <td class="text-end text-success">{{ r.approved_paid|intcomma }}</td>
+              <td class="text-end fw-semibold">{{ r.total_approved|intcomma }}</td>
+              <td class="text-center">
+                <button type="button"
+                        class="btn btn-sm btn-outline-success mark-paid-btn"
+                        data-character="{{ r.character }}"
+                        {% if r.approved_unpaid|default:0 <= 0 %}disabled{% endif %}>
+                  {% trans "Mark as Paid" %}
+                </button>
+              </td>
+            </tr>
+            {% empty %}
+            <tr >
+              <td colspan="5" class="text-center text-muted">{% trans "No payment data to display." %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr>
+              <th class="text-end">{% trans "Totals" %}</th>
+              <th class="text-end">{{ totals.approved_unpaid|intcomma }}</th>
+              <th class="text-end">{{ totals.approved_paid|intcomma }}</th>
+              <th class="text-end">{{ totals.total_approved|intcomma }}</th>
+              <th></th>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="position-fixed top-0 end-0 p-3" style="z-index: 1080">
+  <div id="copyToast" class="toast align-items-center text-bg-success border-0" role="alert" aria-live="assertive" aria-atomic="true">
+    <div class="d-flex">
+      <div class="toast-body">
+        {% trans "Copied to clipboard" %}
+      </div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="{% trans 'Close' %}"></button>
+    </div>
+  </div>
+</div>
+
+<style>
+  .container-xxl { max-width: 100%; }
+  .copyable { cursor: pointer; }
+</style>
+<script>
+(function() {
+  function onReady(fn){ if(document.readyState!=='loading') fn(); else document.addEventListener('DOMContentLoaded', fn); }
+  onReady(() => {
+    // Initialize tooltips safely
+    try {
+      if (window.bootstrap) {
+        document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+          try { new bootstrap.Tooltip(el); } catch(e){}
+        });
+      }
+    } catch(e) {}
+
+    // Toast helper
+    let toastInst;
+    function showToast() {
+      try {
+        if (!window.bootstrap) return;
+        const el = document.getElementById('copyToast');
+        if (!el) return;
+        toastInst = toastInst || new bootstrap.Toast(el, { delay: 1500 });
+        toastInst.show();
+      } catch(e) {}
+    }
+
+    // Single delegated listener
+    document.addEventListener('click', async (e) => {
+      const copyEl = e.target.closest('.copyable');
+      if (copyEl) {
+        const txt = copyEl.getAttribute('data-copy') || copyEl.textContent || '';
+        try { await navigator.clipboard?.writeText(String(txt).trim()); showToast(); } catch(_){}
+        return;
+      }
+
+      const btn = e.target.closest('.mark-paid-btn');
+      if (btn) {
+        const character = btn.getAttribute('data-character') || '';
+        if (!character) return;
+        btn.disabled = true;
+        btn.classList.add('disabled');
+        try {
+          const resp = await fetch("{% url 'aasubsidy:payments_mark_paid' %}", {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+              'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: new URLSearchParams({ character }),
+            credentials: 'same-origin',
+          });
+          const data = await resp.json().catch(() => ({}));
+          if (!resp.ok || !data.ok) throw new Error(data.error || 'failed');
+          window.location.reload();
+        } catch (err) {
+          // Re-enable on failure
+          btn.disabled = false;
+          btn.classList.remove('disabled');
+          console.error('Mark as Paid failed:', err);
+          alert('Failed to mark as paid. Please try again.');
+        }
+      }
+    });
+
+    function getCookie(name) {
+      const m = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+      return m ? decodeURIComponent(m[2]) : '';
+    }
+  });
+})();
+</script>
+{% endblock %}

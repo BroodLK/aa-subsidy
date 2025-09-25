@@ -1,0 +1,236 @@
+{% extends 'contracts/base.html' %}
+{% load i18n humanize %}
+
+{% block details %}
+<div class="container-xxl py-3">
+    <div id="stockSection" class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h3 class="m-0" id="stockHeader">{% trans "Doctrine Stock Summary" %}</h3>
+        </div>
+        <div class="card-body p-2">
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0 table-bordered">
+                    <thead class="table-dark">
+                    <tr class="text-center">
+                        <th>{% trans "Doctrine" %}</th>
+                        <th>{% trans "Stock Requested" %}</th>
+                        <th>{% trans "Stock Available" %}</th>
+                        <th>{% trans "Stock Needed" %}</th>
+                        <th>{% trans "Volume (m3)" %}</th>
+                        <th>{% trans "Jita Sell (ISK)" %}</th>
+                        <th>{% trans "Subsidy Amount (ISK)" %}</th>
+                        <th>{% trans "Alliance Purchase (ISK)" %}</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for r in rows %}
+                    <tr>
+                        <td><a href="/fittings/fit/{{ r.fit_id }}/" target="_blank">{{ r.doctrine }}</a></td>
+                        <td class="text-end">{{ r.stock_requested|intcomma }}</td>
+                        <td class="text-end
+                            {% if r.stock_available > r.stock_requested %} text-success
+                            {% elif r.stock_available < r.stock_requested %} text-danger
+                            {% else %}{% endif %}">
+                            {{ r.stock_available|intcomma }}
+                        </td>
+                        <td class="text-end">
+                            {% with needed=r.stock_needed adj=r.adjusted_needed %}
+                                {% if needed > 0 %}
+                                    <a href="#"
+                                       class="claim-link {% if r.claimed_total|default:0 > 0 %}text-warning{% else %}text-danger{% endif %}"
+                                       data-bs-toggle="modal"
+                                       data-bs-target="#claimModal"
+                                       data-fit-id="{{ r.fit_id }}"
+                                       data-fit-name="{{ r.doctrine }}"
+                                       data-available="{{ r.stock_available }}"
+                                       data-needed="{{ needed }}"
+                                       data-claimed-total="{{ r.claimed_total }}"
+                                       data-claimed-me="{{ r.claimed_by_me }}"
+                                       data-claimants="{% if r.claimants %}{{ r.claimants }}{% endif %}"
+                                       data-bs-html="true"
+                                       data-bs-placement="top"
+                                       title=""
+                                       data-bs-original-title=""
+                                       data-bs-toggle="tooltip"
+                                       data-bs-title="<div class='fw-semibold mb-1'>{{ r.doctrine }}</div>"
+                                       data-bs-content="<div>Stock available: <span class='fw-semibold'>{{ r.stock_available|intcomma }}</span></div><div>Stock being brought by you: <span class='fw-semibold'>{{ r.claimed_by_me|intcomma }}</span></div>">
+                                        {{ adj|intcomma }}
+                                    </a>
+                                {% else %}
+                                    <span class="text-muted">{{ adj|intcomma }}</span>
+                                {% endif %}
+                            {% endwith %}
+                        </td>
+                        <td class="text-end">{{ r.volume_m3|intcomma }}</td>
+                        <td class="text-end">
+                            {{ r.jita_sell_isk|intcomma }}
+                            <span class="copyable" data-copy="{{ r.jita_sell_isk }}" title="{% trans 'Click to copy' %}">
+                                <i class="fa fa-copy ms-1 text-secondary"></i>
+                            </span>
+                        </td>
+                        <td class="text-end">{{ r.subsidy_isk|intcomma }}</td>
+                        <td class="text-end">{{ r.alliance_purchase_isk|intcomma }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="8" class="text-center text-muted">{% trans "No doctrines to display." %}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="claimModal" tabindex="-1" aria-labelledby="claimModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <form id="claimForm" class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="claimModalLabel">{% trans "Claim Supply" %}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="{% trans 'Close' %}"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-2 small" id="claimFitName"></div>
+        <label for="claimQty" class="form-label">{% trans "How many items are you claiming to supply" %}</label>
+        <input type="number" min="0" step="1" class="form-control" id="claimQty" required>
+        <input type="hidden" id="claimFitId">
+        <div class="form-text" id="claimHint"></div>
+        <div class="invalid-feedback d-block" id="claimError" style="display:none;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">{% trans "Cancel" %}</button>
+        <button type="submit" class="btn btn-primary">{% trans "Save" %}</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div class="position-fixed top-0 end-0 p-3" style="z-index: 1080">
+  <div id="copyToast" class="toast align-items-center text-bg-success border-0" role="alert" aria-live="assertive" aria-atomic="true">
+    <div class="d-flex">
+      <div class="toast-body">
+        {% trans "Copied to clipboard" %}
+      </div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="{% trans 'Close' %}"></button>
+    </div>
+  </div>
+</div>
+
+<style>
+    .container-xxl { max-width: 100%; }
+    .copyable { cursor: pointer; }
+    th[data-col] { cursor: pointer; }
+</style>
+<script>
+(function() {
+  const onReady = (fn) => (document.readyState !== 'loading') ? fn() : document.addEventListener('DOMContentLoaded', fn);
+  onReady(() => {
+    if (window.bootstrap) {
+      document.querySelectorAll('.claim-link').forEach(el => {
+        try { new bootstrap.Tooltip(el, { container: 'body', html: true }); } catch (e) {}
+      });
+    }
+
+    // Toast helper
+    let toastInst;
+    function showToast() {
+      if (!window.bootstrap) return;
+      const el = document.getElementById('copyToast');
+      if (!el) return;
+      toastInst = toastInst || new bootstrap.Toast(el, { delay: 1500 });
+      toastInst.show();
+    }
+
+    const modalEl = document.getElementById('claimModal');
+    const qtyEl = document.getElementById('claimQty');
+    const fitIdEl = document.getElementById('claimFitId');
+    const fitNameEl = document.getElementById('claimFitName');
+    const hintEl = document.getElementById('claimHint');
+    const errorEl = document.getElementById('claimError');
+    let modal;
+
+    document.querySelectorAll('.claim-link').forEach(link => {
+      link.addEventListener('click', () => {
+        const fitId = link.getAttribute('data-fit-id');
+        const fitName = link.getAttribute('data-fit-name');
+        const needed = parseInt(link.getAttribute('data-needed') || '0', 10);
+        const available = parseInt(link.getAttribute('data-available') || '0', 10);
+        const claimedMe = parseInt(link.getAttribute('data-claimed-me') || '0', 10);
+        const claimedTotal = parseInt(link.getAttribute('data-claimed-total') || '0', 10);
+        const claimants = (link.getAttribute('data-claimants') || '').trim();
+
+        fitIdEl.value = fitId;
+        qtyEl.value = claimedMe > 0 ? claimedMe : '';
+        qtyEl.min = 1;
+
+        fitNameEl.innerHTML = `<span class="text-muted">${fitName}</span>`;
+
+        hintEl.innerHTML = `· Needed: <b>${needed.toLocaleString()}</b><br> · Available: <b>${available.toLocaleString()}</b><br> · Claimed (all): <b>${claimedTotal.toLocaleString()}</b><br> · Claimed by You: <b>${claimedMe.toLocaleString()}</b><br> · Claimed by: <b>${claimants}</b>`;
+        errorEl.style.display = 'none';
+        errorEl.textContent = '';
+
+        modal = modal || (window.bootstrap ? new bootstrap.Modal(modalEl) : null);
+        if (modal) modal.show();
+      });
+    });
+
+    document.addEventListener('click', async (e) => {
+      const copyEl = e.target.closest('.copyable');
+      if (copyEl) {
+        const txt = copyEl.getAttribute('data-copy') || copyEl.textContent || '';
+        try {
+          await navigator.clipboard?.writeText(txt.trim());
+          showToast();
+        } catch (_) {}
+      }
+      const btn = e.target.closest('.copy-btn');
+      if (btn) {
+        const targetSel = btn.getAttribute('data-copy-target');
+        const input = targetSel && document.querySelector(targetSel);
+        if (input) {
+          try {
+            await navigator.clipboard?.writeText(String(input.value || ''));
+            showToast();
+          } catch (_) {}
+        }
+      }
+    });
+
+    document.getElementById('claimForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const qty = parseInt(qtyEl.value || '0', 10);
+      if (!(qty > 0)) {
+        errorEl.textContent = 'Please enter a valid number.';
+        errorEl.style.display = 'block';
+        return;
+      }
+      const fitId = parseInt(fitIdEl.value, 10);
+      try {
+        const resp = await fetch("{% url 'aasubsidy:save_claim' %}", {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken'),
+          },
+          body: JSON.stringify({ fit_id: fitId, quantity: qty }),
+          credentials: 'same-origin',
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.error || 'Failed to save claim');
+        window.location.reload();
+      } catch (err) {
+        errorEl.textContent = err.message || 'Error saving claim.';
+        errorEl.style.display = 'block';
+      }
+    });
+
+    function getCookie(name) {
+      const m = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+      return m ? decodeURIComponent(m[2]) : '';
+    }
+  });
+})();
+</script>
+{% endblock %}

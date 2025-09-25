@@ -1,0 +1,394 @@
+{% extends 'contracts/base.html' %}
+{% load i18n humanize %}
+
+{% block details %}
+<div class="container-xxl py-3">
+  <div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <h3 class="m-0" id="contractsHeader">{% trans "Contracts Dashboard" %}</h3>
+    </div>
+
+    <div class="card-body p-2">
+      <div class="table-responsive">
+        <table id="contractsTable" class="table table-sm align-middle mb-0 table-bordered">
+          <thead class="table-dark">
+            <tr class="text-center">
+              <th data-col="id">{% trans "ID" %}</th>
+              <th data-col="issuer">{% trans "Issuer" %}</th>
+              <th data-col="date_issued">{% trans "Date Issued" %}</th>
+              <th data-col="price_listed">{% trans "Price Listed" %}</th>
+              <th data-col="status">{% trans "Status" %}</th>
+              <th data-col="title">{% trans "Title" %}</th>
+              <th data-col="station">{% trans "Station" %}</th>
+              <th data-col="doctrine">{% trans "Doctrine" %}</th>
+              <th data-col="review_status">{% trans "Review_Status" %}</th>
+              <th data-col="subsidy_amount">{% trans "Subsidy_Amount" %}</th>
+              <th data-col="reason">{% trans "Reason" %}</th>
+              <th data-col="paid">{% trans "Paid" %}</th>
+              <th data-col="pct_jita">% Jita</th>
+              <th data-col="actions">{% trans "Actions" %}</th>
+            </tr>
+            <tr class="text-center small">
+              <th><input class="form-control form-control-sm" data-filter="id" placeholder="…"></th>
+              <th><input class="form-control form-control-sm" data-filter="issuer" placeholder="…"></th>
+              <th><input class="form-control form-control-sm" data-filter="date_issued" placeholder="…"></th>
+              <th><input class="form-control form-control-sm" data-filter="price_listed" placeholder="…"></th>
+              <th>
+                <select class="form-select form-select-sm" data-filter="status">
+                  <option value="">{% trans "All" %}</option>
+                  <option>outstanding</option>
+                  <option>finished</option>
+                  <option>deleted</option>
+                  <option>failed</option>
+                </select>
+              </th>
+              <th><input class="form-control form-control-sm" data-filter="title" placeholder="…"></th>
+              <th><input class="form-control form-control-sm" data-filter="station" placeholder="…"></th>
+              <th><input class="form-control form-control-sm" data-filter="doctrine" placeholder="…"></th>
+              <th>
+                <select class="form-select form-select-sm" data-filter="review_status">
+                  <option value="">{% trans "All" %}</option>
+                  <option>Approved</option>
+                  <option>Rejected</option>
+                  <option>Pending</option>
+                </select>
+              </th>
+              <th><input class="form-control form-control-sm" data-filter="subsidy_amount" placeholder="…"></th>
+              <th><input class="form-control form-control-sm" data-filter="reason" placeholder="…"></th>
+              <th>
+                <select class="form-select form-select-sm" data-filter="paid">
+                  <option value="">{% trans "All" %}</option>
+                  <option>Yes</option>
+                  <option>No</option>
+                </select>
+              </th>
+              <th><input class="form-control form-control-sm" data-filter="pct_jita" placeholder="…"></th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in contracts %}
+            <tr class="text-center">
+              <td data-val="{{ row.id }}">{{ row.id }}</td>
+              <td data-val="{{ row.issuer }}">
+                <span class="copyable" data-copy="{{ row.issuer }}" title="{% trans 'Click to copy' %}">
+                  <i class="fa fa-copy ms-1 text-secondary"></i> {{ row.issuer }}
+                </span>
+              </td>
+              <td data-val="{{ row.date_issued }}">{{ row.date_issued }}</td>
+              <td data-val="{{ row.price_listed }}">{{ row.price_listed|intcomma }}</td>
+              <td data-val="{{ row.status|lower }}">{{ row.status|title }}</td>
+              <td data-val="{{ row.title|default_if_none:''|escape }}">{{ row.title|escape }}</td>
+              <td data-val="{{ row.station|default_if_none:''|escape }}">
+                {% if row.station %}
+                  <i class="fa fa-location-dot text-info" data-bs-toggle="tooltip" title="{{ row.station|escape }}"></i>
+                {% else %}—{% endif %}
+              </td>
+              <td data-val="{{ row.doctrine|striptags }}">{{ row.doctrine|safe }}</td>
+              <td data-val="{{ row.review_status }}">
+                <span class="{% if row.review_status == 'Approved' %}text-success{% elif row.review_status == 'Rejected' %}text-danger{% endif %}">{{ row.review_status }}</span>
+              </td>
+              <td data-val="{{ row.subsidy_amount }}" data-suggested="{{ row.suggested_subsidy|default_if_none:'' }}" data-basis="{{ row.basis_isk|default_if_none:'' }}">
+                <div class="input-group input-group-sm">
+                  <input type="number" step="0.01" class="form-control form-control-sm themable-input text-end"
+                         value="{{ row.subsidy_amount|default_if_none:0|floatformat:2 }}"
+                         data-id="{{ row.id }}" data-field="subsidy_amount">
+                  <button class="btn btn-outline-secondary copy-btn" type="button" title="{% trans 'Copy subsidy' %}" data-copy-target="[data-field='subsidy_amount'][data-id='{{ row.id }}']">
+                    <i class="fa fa-copy"></i>
+                  </button>
+                </div>
+              </td>
+              <td data-val="{{ row.reason|default_if_none:''|escape }}">
+                {% if row.reason %}
+                  <i class="fa fa-comment text-info" data-bs-toggle="tooltip" title="{{ row.reason|escape }}"></i>
+                {% else %}—{% endif %}
+              </td>
+              <td data-val="{{ row.paid|yesno:'Yes,No' }}">
+                <span class="{% if row.paid %}text-success{% endif %}">{{ row.paid|yesno:"Yes,No" }}</span>
+              </td>
+              <td data-val="{{ row.pct_jita }}" data-basis="{{ row.basis_isk|default_if_none:'' }}" data-price="{{ row.price_listed|default_if_none:'' }}
+                class="{% if row.pct_jita > 101 %}text-danger{% elif row.pct_jita < 99 %}text-warning{% else %}text-success{% endif %}">{{ row.pct_jita|default_if_none:0|floatformat:2 }}
+              </td>
+              <td>
+                <div class="btn-group btn-group-sm" role="group">
+                  <button class="btn btn-outline-success" data-id="{{ row.id }}" data-action="approve" {% if not perms.aasubsidy.review_subsidy %}disabled{% endif %} title="{% trans 'Approve' %}">
+                    <i class="fa fa-check text-success me-1"></i><span class="d-none d-md-inline">{% trans "Approve" %}</span>
+                  </button>
+                  <button class="btn btn-outline-warning" data-id="{{ row.id }}" data-action="approve_with_comment" {% if not perms.aasubsidy.review_subsidy %}disabled{% endif %} title="{% trans 'Approve + Comment' %}">
+                    <i class="fa fa-check-double text-warning me-1"></i><span class="d-none d-md-inline">{% trans "Approve + Comment" %}</span>
+                  </button>
+                  <button class="btn btn-outline-danger" data-id="{{ row.id }}" data-action="deny" {% if not perms.aasubsidy.review_subsidy %}disabled{% endif %} title="{% trans 'Deny' %}">
+                    <i class="fa fa-x text-danger me-1"></i><span class="d-none d-md-inline">{% trans "Deny" %}</span>
+                  </button>
+                </div>
+              </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="14" class="text-center text-muted">{% trans "No contracts to display." %}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="approvalModal" tabindex="-1" aria-labelledby="approvalModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <form method="post" action="" id="approvalModalForm">
+          {% csrf_token %}
+          <div class="modal-header">
+            <h5 class="modal-title" id="approvalModalLabel">{% trans "Item Action" %}</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="{% trans 'Close' %}"></button>
+          </div>
+          <div class="modal-body">
+            <input type="hidden" id="modalAction" name="action" value="">
+            <input type="hidden" id="modalContractId" name="contract_id" value="">
+            <input type="hidden" id="modalSubsidyAmount" name="subsidy_amount" value="">
+            <div class="mb-3">
+              <label for="commentText" class="form-label">{% trans "Reason/Comment" %}</label>
+              <textarea id="commentText" name="comment" class="form-control themable-input" rows="3" required></textarea>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{% trans "Cancel" %}</button>
+            <button type="submit" class="btn btn-primary">{% trans "Confirm" %}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div class="position-fixed top-0 end-0 p-3" style="z-index: 1080">
+  <div id="copyToast" class="toast align-items-center text-bg-success border-0" role="alert" aria-live="assertive" aria-atomic="true">
+    <div class="d-flex">
+      <div class="toast-body">
+        {% trans "Copied to clipboard" %}
+      </div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="{% trans 'Close' %}"></button>
+    </div>
+  </div>
+</div>
+
+<style>
+  .container-xxl { max-width: 100%; }
+  .copyable { cursor: pointer; }
+  th[data-col] { cursor: pointer; }
+</style>
+<script>
+(function() {
+  const onReady = (fn) => (document.readyState !== 'loading') ? fn() : document.addEventListener('DOMContentLoaded', fn);
+  onReady(() => {
+    document.querySelectorAll('#contractsTable tbody tr').forEach(tr => {
+      const subTd = tr.querySelector('td[data-suggested]');
+      const input = tr.querySelector("input[data-field='subsidy_amount']");
+      if (!subTd || !input) return;
+      const current = parseFloat(input.value || '0') || 0;
+      const suggested = parseFloat(subTd.getAttribute('data-suggested') || '0') || 0;
+      if (current === 0 && suggested > 0) {
+        input.value = suggested.toFixed(2);
+        subTd.setAttribute('data-val', suggested);
+      }
+      // Optional: recompute % Jita client-side if basis and price are present
+      const pctTd = tr.querySelector("td[data-price][data-basis]");
+      if (pctTd) {
+        const price = parseFloat(pctTd.getAttribute('data-price') || '0') || 0;
+        const basis = parseFloat(pctTd.getAttribute('data-basis') || '0') || 0;
+        if (price > 0 && basis > 0) {
+          const pct = ((basis / price) * 100);
+          pctTd.textContent = pct.toFixed(2);
+          pctTd.setAttribute('data-val', pct.toFixed(2));
+        }
+      }
+    });
+
+    const table = document.getElementById('contractsTable');
+    if (!table) return;
+
+    // Toast helper
+    let toastInst;
+    function showToast() {
+      if (!window.bootstrap) return;
+      const el = document.getElementById('copyToast');
+      if (!el) return;
+      toastInst = toastInst || new bootstrap.Toast(el, { delay: 1500 });
+      toastInst.show();
+    }
+
+    const STORAGE_KEY = 'aasubsidy_contracts_table_state';
+    const serverPref = {{ table_pref|default:"null"|safe }};
+    const state = serverPref ? { sort: { idx: serverPref.sort_idx, dir: serverPref.sort_dir }, filters: JSON.parse(serverPref.filters || "{}") } : JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+
+    const savePrefToServer = () => {
+      if ("{{ request.user.is_authenticated|yesno:'1,0' }}" !== "1") return;
+      try {
+        fetch("{% url 'aasubsidy:save_table_pref' %}", {
+          method: "POST",
+          headers: {
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/json",
+            "X-CSRFToken": (document.querySelector('[name=csrfmiddlewaretoken]')||{}).value || ''
+          },
+          body: JSON.stringify({ sort_idx: state.sort?.idx || 0, sort_dir: state.sort?.dir || 'desc', filters: state.filters || {} })
+        }).catch(() => {});
+      } catch (e) {}
+    };
+
+    const applyFilters = () => {
+      const rows = table.tBodies[0].rows;
+      for (const tr of rows) {
+        let show = true;
+        for (const input of table.querySelectorAll('[data-filter]')) {
+          const key = input.getAttribute('data-filter');
+          const val = (input.value || '').toString().trim().toLowerCase();
+          if (!val) continue;
+          const idx = Array.from(table.tHead.rows[0].cells).findIndex(th => th.getAttribute('data-col')===key);
+          const td = idx >= 0 ? tr.cells[idx] : null;
+          const text = (td ? (td.getAttribute('data-val') || td.textContent || '') : '').toLowerCase();
+          if (text.indexOf(val) === -1) { show = false; break; }
+        }
+        tr.style.display = show ? '' : 'none';
+      }
+    };
+
+    for (const input of table.querySelectorAll('[data-filter]')) {
+      if (state.filters && state.filters[input.getAttribute('data-filter')]) {
+        input.value = state.filters[input.getAttribute('data-filter')];
+      }
+      const save = () => {
+        state.filters = state.filters || {};
+        state.filters[input.getAttribute('data-filter')] = input.value;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        applyFilters();
+        savePrefToServer();
+      };
+      input.addEventListener('input', save);
+      input.addEventListener('change', save);
+    }
+
+    const getCellValue = (tr, idx) => {
+      const td = tr.cells[idx];
+      if (!td) return '';
+      const v = td.getAttribute('data-val') || td.textContent || '';
+      const n = Number(String(v).replace(/[, ]/g, ''));
+      return isNaN(n) ? String(v).toLowerCase() : n;
+    };
+
+    const header = table.tHead.rows[0];
+    const sortBy = (idx, dir) => {
+      const rows = Array.from(table.tBodies[0].rows);
+      rows.sort((a, b) => {
+        const A = getCellValue(a, idx);
+        const B = getCellValue(b, idx);
+        if (A < B) return dir === 'asc' ? -1 : 1;
+        if (A > B) return dir === 'asc' ? 1 : -1;
+        return 0;
+      });
+      rows.forEach(r => table.tBodies[0].appendChild(r));
+      state.sort = { idx, dir };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      savePrefToServer();
+    };
+
+    for (let i = 0; i < header.cells.length; i++) {
+      const th = header.cells[i];
+      if (!th.getAttribute('data-col')) continue;
+      th.addEventListener('click', () => {
+        const current = state.sort || {};
+        const dir = current.idx === i && current.dir === 'asc' ? 'desc' : 'asc';
+        sortBy(i, dir);
+      });
+    }
+
+    if (state.sort && Number.isInteger(state.sort.idx)) {
+      sortBy(state.sort.idx, state.sort.dir || 'asc');
+    } else {
+      const idIdx = Array.from(header.cells).findIndex(th => th.getAttribute('data-col') === 'id');
+      if (idIdx >= 0) sortBy(idIdx, 'desc');
+    }
+
+    applyFilters();
+
+    document.addEventListener('click', async (e) => {
+      const copyEl = e.target.closest('.copyable');
+      if (copyEl) {
+        const txt = copyEl.getAttribute('data-copy') || copyEl.textContent || '';
+        try {
+          await navigator.clipboard?.writeText(txt.trim());
+          showToast();
+        } catch (_) {}
+      }
+      const btn = e.target.closest('.copy-btn');
+      if (btn) {
+        const targetSel = btn.getAttribute('data-copy-target');
+        const input = targetSel && document.querySelector(targetSel);
+        if (input) {
+          try {
+            await navigator.clipboard?.writeText(String(input.value || ''));
+            showToast();
+          } catch (_) {}
+        }
+      }
+    });
+
+    if (window.bootstrap) {
+      document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+        try { new bootstrap.Tooltip(el, { container: 'body' }); } catch (e) {}
+      });
+    }
+
+    const modalEl = document.getElementById('approvalModal');
+    const modalForm = document.getElementById('approvalModalForm');
+    const modal = modalEl ? new bootstrap.Modal(modalEl) : null;
+
+    function post(url, data) {
+      fetch(url, {
+        method: 'POST',
+        headers: { 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(data)
+      }).then(() => location.reload()).catch(() => location.reload());
+    }
+
+    document.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-action]");
+      if (!btn) return;
+      const id = btn.dataset.id;
+      const action = btn.dataset.action;
+
+      const subsidyInput = document.querySelector(`input[data-field="subsidy_amount"][data-id="${id}"]`);
+      const subsidy_amount = subsidyInput ? subsidyInput.value : '';
+
+      if (action === "approve") {
+        post("{% url 'aasubsidy:approve' 0 %}".replace("/0/", `/${id}/`), { subsidy_amount });
+        return;
+      }
+      if (action === "approve_with_comment" || action === "deny") {
+        const url = action === "deny"
+          ? "{% url 'aasubsidy:deny' 0 %}".replace("/0/", `/${id}/`)
+          : "{% url 'aasubsidy:approve' 0 %}".replace("/0/", `/${id}/`);
+        modalForm.setAttribute('action', url);
+        document.getElementById('modalAction').value = action;
+        document.getElementById('modalContractId').value = id;
+        document.getElementById('modalSubsidyAmount').value = subsidy_amount || '';
+        const label = document.getElementById('approvalModalLabel');
+        if (label) label.textContent = action === 'deny' ? "{% trans 'Deny with Reason' %}" : "{% trans 'Approve with Comment' %}";
+        modal && modal.show();
+      }
+    });
+
+    modalForm && modalForm.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const data = new FormData(modalForm);
+      const url = modalForm.getAttribute('action') || '#';
+      fetch(url, {
+        method: 'POST',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        body: data
+      }).then(r => r.json()).then(() => location.reload()).catch(() => location.reload());
+    });
+  });
+})();
+</script>
+{% endblock %}

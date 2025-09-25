@@ -1,0 +1,58 @@
+{% extends 'allianceauth/base-bs5.html' %}
+
+{% load i18n %}
+
+{% block page_title %}
+{% translate "Subsidy" %}
+{% endblock %}
+
+{% block header_nav_brand %}
+{% translate "Subsidy" %}
+{% endblock header_nav_brand %}
+
+{% block content %}
+<div class="container-xxl mt-3">
+
+    <ul class="nav nav-pills mb-3">
+        <li class="nav-item">
+            <a class="nav-link {% if request.resolver_match.url_name == 'index' %}active{% endif %}"
+               href="{% url 'aasubsidy:index' %}">
+                {% translate "Dashboard" %}
+            </a>
+        </li>
+
+        {% if perms.aasubsidy.review_subsidy %}
+        <li class="nav-item">
+            <a class="nav-link {% if request.resolver_match.url_name == 'review' %}active{% endif %}"
+               href="{% url 'aasubsidy:review' %}">
+                {% translate "Review" %}
+            </a>
+        </li>
+        {% endif %}
+
+        {% if perms.aasubsidy.subsidy_admin %}
+        <li class="nav-item">
+            <a class="nav-link {% if request.resolver_match.url_name == 'payments' %}active{% endif %}"
+               href="{% url 'aasubsidy:payments' %}">
+                {% trans "Payments" %}</a>
+        </li>
+        <li class="nav-item ms-auto">
+            <a class="nav-link {% if request.resolver_match.url_name in 'doctrine_admin doctrine_detail' %}active{% endif %}"
+               href="{% url 'aasubsidy:doctrine_admin' %}">
+                {% translate "Doctrine Admin" %}
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link {% if request.resolver_match.url_name == 'subsidy_settings' %}active{% endif %}"
+               href="{% url 'aasubsidy:subsidy_settings' %}">
+                {% translate "Subsidy Settings" %}
+            </a>
+        </li>
+        {% endif %}
+    </ul>
+
+    <div class="allianceauth-subsidy-plugin">
+        {% block details %}{% endblock %}
+    </div>
+</div>
+{% endblock %}

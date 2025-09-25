@@ -1,0 +1,47 @@
+{% extends 'contracts/base.html' %}
+{% load i18n %}
+
+{% block details %}
+<div class="container-xxl py-3">
+  {% if messages %}
+    {% for message in messages %}
+      <div class="alert {% if message.tags %}alert-{{ message.tags }}{% else %}alert-info{% endif %}">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+  <h3 class="mb-3">{% trans "Doctrine Requested Stock" %}</h3>
+
+  <table class="table table-sm table-dark align-middle">
+    <thead>
+      <tr>
+        <th>{% trans "Doctrine" %}</th>
+        <th class="text-end">{% trans "Current Requested" %}</th>
+        <th class="text-end">{% trans "Set Requested" %}</th>
+        <th class="text-end">{% trans "Actions" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in doctrines %}
+      <tr>
+        <td>
+          <a class="link-light" href="{% url 'aasubsidy:doctrine_detail' d.name %}">{{ d.name }}</a>
+        </td>
+        <td class="text-end">{{ d.requested }}</td>
+        <td class="text-end">
+          <form method="post" action="{% url 'aasubsidy:doctrine_admin' %}" class="d-inline">
+            {% csrf_token %}
+            <input type="hidden" name="doctrine_name" value="{{ d.name }}">
+            <input class="form-control form-control-sm d-inline-block w-auto" type="number" name="requested" min="0" step="1" value="{{ d.requested }}">
+            <button class="btn btn-sm btn-primary" type="submit">{% trans "Apply to Doctrine" %}</button>
+          </form>
+        </td>
+        <td class="text-end">
+          <a class="btn btn-sm btn-secondary" href="{% url 'aasubsidy:doctrine_detail' d.name %}">{% trans "Edit Fittings" %}</a>
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="4" class="text-center text-muted">{% trans "No doctrines found." %}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

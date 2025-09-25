@@ -1,0 +1,44 @@
+{% extends 'contracts/base.html' %}
+{% load i18n %}
+
+{% block details %}
+<div class="container-xxl py-3">
+  {% if messages %}
+    {% for message in messages %}
+      <div class="alert {% if message.tags %}alert-{{ message.tags }}{% else %}alert-info{% endif %}">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+  <h3 class="mb-3">{% blocktrans %}Edit Requested Stock for Doctrine "{{ doctrine_name }}"{% endblocktrans %}</h3>
+  <form method="post">
+    {% csrf_token %}
+    <table class="table table-sm table-dark align-middle">
+      <thead>
+        <tr>
+          <th>{% trans "Fitting ID" %}</th>
+          <th>{% trans "Doctrine" %}</th>
+          <th class="text-end">{% trans "Requested" %}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in fittings %}
+        <tr>
+          <td>{{ f.id }}</td>
+          <td>{{ f.name }}</td>
+          <td class="text-end">
+            <input class="form-control form-control-sm d-inline-block w-auto"
+                   type="number" min="0" step="1"
+                   name="requested_{{ f.id }}" value="{{ f.requested }}">
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="3" class="text-center text-muted">{% trans "No fittings in this doctrine." %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="text-end">
+      <a class="btn btn-secondary" href="{% url 'aasubsidy:doctrine_admin' %}">{% trans "Back" %}</a>
+      <button class="btn btn-primary" type="submit">{% trans "Save" %}</button>
+    </div>
+  </form>
+</div>
+{% endblock %}
