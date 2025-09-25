@@ -29,14 +29,9 @@ def doctrine_stock_summary(start, end, corporation_id=1, status_filter=None):
     cfg = _cfg()
     incr_val = cfg["incr"]
 
-    params = [start, end]
-    where = "c.date_issued >= %s AND c.date_issued <= %s"
-    if corporation_id is not None:
-        where += " AND c.corporation_id = %s"
-        params.append(corporation_id)
-    if status_filter:
-        where += " AND c.status IN (" + ",".join(["%s"] * len(status_filter)) + ")"
-        params.extend(status_filter)
+    params = [start, end, 1, "outstanding"]
+    where = "c.date_issued >= %s AND c.date_issued <= %s AND c.corporation_id = %s AND c.status = %s"
+
     sql = f"""
     WITH ci_sum AS (
       SELECT c.id AS contract_pk, ci.type_name_id AS type_id, SUM(ci.quantity) AS total_qty
@@ -46,7 +41,7 @@ def doctrine_stock_summary(start, end, corporation_id=1, status_filter=None):
       GROUP BY c.id, ci.type_name_id
     ),
     match_fitting AS (
-      SELECT f.id AS fit_id, cs.contract_pk
+      SELECT f.id AS fit_id, MIN(cs.contract_pk) AS contract_pk
       FROM fittings_fitting f
       JOIN fittings_fittingitem fi ON fi.fit_id = f.id
       JOIN ci_sum cs ON cs.type_id = fi.type_id AND cs.total_qty >= fi.quantity
@@ -111,8 +106,6 @@ def doctrine_stock_summary(start, end, corporation_id=1, status_filter=None):
         SubsidyItemPrice.objects.filter(eve_type_id=OuterRef("ship_type_type_id")).values(price_field)[:1],
         output_field=DEC_2,
     )
-
-
     ship_vol = Subquery(
         EveType.objects.filter(id=OuterRef("ship_type_type_id"))
         .annotate(eff_vol=Coalesce(F("packaged_volume"), F("volume")))

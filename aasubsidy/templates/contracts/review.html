@@ -106,7 +106,7 @@
               <td data-val="{{ row.paid|yesno:'Yes,No' }}">
                 <span class="{% if row.paid %}text-success{% endif %}">{{ row.paid|yesno:"Yes,No" }}</span>
               </td>
-              <td data-val="{{ row.pct_jita }}" data-basis="{{ row.basis_isk|default_if_none:'' }}" data-price="{{ row.price_listed|default_if_none:'' }}
+              <td data-val="{{ row.pct_jita }}" data-basis="{{ row.basis_isk|default_if_none:'' }}" data-price="{{ row.price_listed|default_if_none:'' }}"
                 class="{% if row.pct_jita > 101 %}text-danger{% elif row.pct_jita < 99 %}text-warning{% else %}text-success{% endif %}">{{ row.pct_jita|default_if_none:0|floatformat:2 }}
               </td>
               <td>
