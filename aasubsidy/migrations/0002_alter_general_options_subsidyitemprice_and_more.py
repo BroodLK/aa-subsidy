@@ -7,9 +7,6 @@ import django.db.models.deletion
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('eveuniverse', '0011_extend_industry_activites'),
-        ('corptools', '0125_corporationaudit_last_change_industry_jobs_and_more'),
-        ('fittings', '0017_doctrine_requested_fitting_requested_itemprices'),
         ('aasubsidy', '0001_initial'),
     ]
 
