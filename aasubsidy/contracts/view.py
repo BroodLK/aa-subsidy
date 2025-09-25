@@ -38,7 +38,7 @@ class MainView(PermissionRequiredMixin, TemplateView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         end = timezone.now()
-        start = end - timedelta(days=30)
+        start = end - timedelta(days=3000)
         from ..contracts import summaries as summaries_mod
         summaries_mod.doctrine_stock_summary.request_user_id = self.request.user.id if self.request.user.is_authenticated else None
         ctx["rows"] = doctrine_stock_summary(start, end)
@@ -93,7 +93,7 @@ class ReviewerView(PermissionRequiredMixin, TemplateView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         end = timezone.now()
-        start = end - timedelta(days=30)
+        start = end - timedelta(days=3000)
         ctx["contracts"] = reviewer_table(start, end, corporation_id=1)
         if self.request.user.is_authenticated:
             pref = UserTablePreference.objects.filter(user=self.request.user, table_key="contracts").first()
