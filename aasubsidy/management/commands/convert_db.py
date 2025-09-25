@@ -145,7 +145,9 @@ class Command(BaseCommand):
 
         # Find CorporateContract PKs by contract_id
         cid_list = list(payloads.keys())
-        cc_qs = CorporateContract.objects.filter(contract_id__in=cid_list).only("id", "contract_id")
+        cc_qs = CorporateContract.objects.filter(
+            contract_id__in=cid_list, corporation_id=1
+        ).only("id", "contract_id")
         cc_map = {cc.contract_id: cc.id for cc in cc_qs}
 
         missing = [cid for cid in cid_list if cid not in cc_map]
