@@ -25,7 +25,7 @@ def _cfg():
 
 
 
-def doctrine_stock_summary(start, end, corporation_id=None, status_filter=None):
+def doctrine_stock_summary(start, end, corporation_id=1, status_filter=None):
     cfg = _cfg()
     incr_val = cfg["incr"]
 
