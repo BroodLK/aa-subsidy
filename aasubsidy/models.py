@@ -57,11 +57,12 @@ class CorporateContractSubsidy(models.Model):
             models.UniqueConstraint(fields=["contract"], name="uniq_subsidy_per_contract"),
         ]
         indexes = [
-            models.Index(fields=["review_status"], name="ccs_review_status_idx"),
-            models.Index(fields=["paid"], name="ccs_paid_idx"),
-            models.Index(fields=["exempt"], name="ccs_exempt_idx"),
-            models.Index(fields=["subsidy_amount"], name="ccs_subsidy_amount_idx"),
-            models.Index(fields=["reason"], name="ccs_reason_idx"),
+            models.Index(fields=["contract"], name="uniqs_subsidy_per_contract"),
+            models.Index(fields=["review_status"], name="ccs_review_status_idxs"),
+            models.Index(fields=["paid"], name="ccs_paid_idxs"),
+            models.Index(fields=["exempt"], name="ccs_exempt_idxs"),
+            models.Index(fields=["subsidy_amount"], name="ccs_subsidy_amount_idxs"),
+            models.Index(fields=["reason"], name="ccs_reason_idxs"),
         ]
 
     @property
