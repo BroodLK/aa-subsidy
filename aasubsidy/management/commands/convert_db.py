@@ -2,7 +2,7 @@ import logging
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand
-from django.db import connection, transaction
+from django.db import transaction
 from django.utils import timezone
 
 from aasubsidy.tasks import (
@@ -13,6 +13,10 @@ from aasubsidy.tasks import (
 from aasubsidy.models import CorporateContractSubsidy
 from corptools.models import CorporateContract
 
+import csv
+import json
+from pathlib import Path
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,193 +24,186 @@ class Command(BaseCommand):
     help = "Run initial data imports for Subsidy module: fittings -> types -> prices -> contract subsidies"
 
     def add_arguments(self, parser):
+        parser.add_argument("--dry-run", action="store_true", help="Do not persist writes.")
+        parser.add_argument("--chunk-size", type=int, default=1000, help="Batch size for upserts.")
         parser.add_argument(
-            "--dry-run",
-            action="store_true",
-            help="Do not write any changes to the DB for the contract subsidy import (still runs syncing tasks).",
-        )
-        parser.add_argument(
-            "--chunk-size",
-            type=int,
-            default=1000,
-            help="Batch size for upserts.",
-        )
-        parser.add_argument(
-            "--external-table",
+            "--contracts-dump",
             type=str,
-            default="corptools.corporatecontracts",
-            help="Fully-qualified source table for custom fields (schema.table).",
+            default="",
+            help="Path to contracts dump file (CSV or JSON). Columns/keys required: contract_id, review_status, subsidy_amount, paid, reason",
+        )
+        parser.add_argument(
+            "--skip-sync",
+            action="store_true",
+            help="Skip steps 1-3 (fitting sync, seed types, queue price refresh) and only import contracts.",
         )
 
     def handle(self, *args, **options):
         dry_run: bool = bool(options.get("dry_run"))
         chunk_size: int = int(options.get("chunk_size") or 1000)
-        external_table: str = str(options.get("external_table") or "corptools.corporatecontracts")
+        dump_path: str = (options.get("contracts_dump") or "").strip()
+        skip_sync: bool = bool(options.get("skip_sync"))
 
-        # 1) sync_fitting_requests (wait)
-        self.stdout.write(self.style.MIGRATE_HEADING("Step 1/4: Sync fitting requests (wait)…"))
-        res1 = sync_fitting_requests.apply(args=[], kwargs={}).get(disable_sync_subtasks=False)
-        self.stdout.write(self.style.SUCCESS(f"Fitting requests synced: {res1}"))
+        if not skip_sync:
+            self.stdout.write(self.style.MIGRATE_HEADING("Step 1/4: Sync fitting requests (wait)…"))
+            res1 = sync_fitting_requests.apply(args=[], kwargs={}).get(disable_sync_subtasks=False)
+            self.stdout.write(self.style.SUCCESS(f"Fitting requests synced: {res1}"))
 
-        # 2) seed_all_types_into_subsidy (wait)
-        self.stdout.write(self.style.MIGRATE_HEADING("Step 2/4: Seed all EveTypes into SubsidyItemPrice (wait)…"))
-        res2 = seed_all_types_into_subsidy.apply(args=[], kwargs={}).get(disable_sync_subtasks=False)
-        self.stdout.write(self.style.SUCCESS(f"Seed complete: {res2}"))
+            self.stdout.write(self.style.MIGRATE_HEADING("Step 2/4: Seed all EveTypes into SubsidyItemPrice (wait)…"))
+            res2 = seed_all_types_into_subsidy.apply(args=[], kwargs={}).get(disable_sync_subtasks=False)
+            self.stdout.write(self.style.SUCCESS(f"Seed complete: {res2}"))
 
-        # 3) refresh_subsidy_item_prices (do not wait for inner update)
-        self.stdout.write(self.style.MIGRATE_HEADING("Step 3/4: Queue price refresh (no wait for inner task)…"))
-        res3 = refresh_subsidy_item_prices.apply(args=[], kwargs={}).get(disable_sync_subtasks=False)
-        self.stdout.write(self.style.SUCCESS(f"Price refresh queued: {res3}"))
+            self.stdout.write(self.style.MIGRATE_HEADING("Step 3/4: Queue price refresh (no wait for inner task)…"))
+            res3 = refresh_subsidy_item_prices.apply(args=[], kwargs={}).get(disable_sync_subtasks=False)
+            self.stdout.write(self.style.SUCCESS(f"Price refresh queued: {res3}"))
 
-        # 4) import/merge contract subsidy data
         self.stdout.write(self.style.MIGRATE_HEADING("Step 4/4: Import Corporate Contracts into Subsidy (upsert)…"))
-        created, updated, exempted = self._import_contracts_into_subsidy(
-            external_table=external_table, dry_run=dry_run, chunk_size=chunk_size
-        )
+
+        if not dump_path:
+            self.stdout.write(self.style.ERROR("Missing --contracts-dump. Provide a CSV or JSON dump file."))
+            return
+
+        path = Path(dump_path)
+        if not path.exists():
+            self.stdout.write(self.style.ERROR(f"Dump file not found: {path}"))
+            return
+
+        # Load dump rows
+        rows = self._load_dump(path)
+        if not rows:
+            self.stdout.write(self.style.WARNING("No rows loaded from dump; nothing to do."))
+            return
+
+        created, updated = self._upsert_from_dump(rows, chunk_size=chunk_size, dry_run=dry_run)
         suffix = " (dry-run)" if dry_run else ""
-        self.stdout.write(self.style.SUCCESS(
-            f"Contracts imported{suffix}: created={created}, updated={updated}, exempted={exempted}"
-        ))
+        self.stdout.write(self.style.SUCCESS(f"Contracts imported from dump{suffix}: created={created}, updated={updated}"))
         self.stdout.write(self.style.SUCCESS("All done."))
 
-    def _fetch_custom_contract_fields(self, contract_ids, external_table: str):
-        """
-        Fetch custom fields from the given external table via SQL:
-          review_status (int), subsidy_amount (decimal), paid (bool/int), reason (text)
-
-        Returns dict: {pk_id: (review_status, subsidy_amount, paid, reason)}
-
-        Notes:
-        - Falls back silently if SELECT is not permitted, returning empty dict.
-        - Expects to JOIN by primary key id equality between Django model table and external table.
-        """
-        if not contract_ids:
-            return {}
-
-        results = {}
-        BATCH = 1000
-
+    def _load_dump(self, path: Path) -> list[dict]:
+        ext = path.suffix.lower()
+        if ext == ".json":
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    # allow {"rows": [...]}
+                    data = data.get("rows") or []
+                if not isinstance(data, list):
+                    self.stdout.write(self.style.ERROR("JSON dump must be a list or have 'rows' list."))
+                    return []
+                return [self._normalize_row(d) for d in data if isinstance(d, dict)]
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f"Failed to read JSON: {e}"))
+                return []
+        # default to CSV
         try:
-            with connection.cursor() as cursor:
-                for i in range(0, len(contract_ids), BATCH):
-                    batch = contract_ids[i : i + BATCH]
-                    placeholders = ",".join(["%s"] * len(batch))
-                    sql = f"""
-                        SELECT cc.id AS pk_id,
-                               ext.review_status,
-                               ext.subsidy_amount,
-                               ext.paid,
-                               ext.reason
-                        FROM corptools_corporatecontract cc
-                        JOIN {external_table} ext ON ext.id = cc.id
-                        WHERE cc.id IN ({placeholders})
-                    """
-                    cursor.execute(sql, batch)
-                    for row in cursor.fetchall():
-                        pk_id = int(row[0])
-                        review_status = int(row[1] or 0)
-                        try:
-                            subsidy_amount = Decimal(row[2] or 0)
-                        except Exception:
-                            subsidy_amount = Decimal(0)
-                        paid = bool(row[3] or False)
-                        reason = str(row[4] or "")
-                        results[pk_id] = (review_status, subsidy_amount, paid, reason)
+            out = []
+            with path.open("r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                for r in reader:
+                    out.append(self._normalize_row(r))
+            return out
         except Exception as e:
-            # Permission or table errors: warn and proceed with empty results
-            logger.warning("Skipping external custom field import due to error: %s", e)
-            return {}
+            self.stdout.write(self.style.ERROR(f"Failed to read CSV: {e}"))
+            return []
 
-        return results
+    def _normalize_row(self, row: dict) -> dict:
+        # expected keys: contract_id, review_status, subsidy_amount, paid, reason
+        def to_int(x, default=0):
+            try:
+                return int(x)
+            except Exception:
+                return default
 
-    def _import_contracts_into_subsidy(self, *, external_table: str, dry_run: bool, chunk_size: int):
-        """
-        Upsert CorporateContractSubsidy for all CorporateContract rows.
-        - Create missing subsidy rows.
-        - Update review_status, subsidy_amount, paid, reason from external source table via raw SQL when accessible.
-        - Maintain exempt: deleted and not yet expired => exempt=True.
-        """
-        qs = CorporateContract.objects.all().only("id", "status", "date_expired")
-        ids = list(qs.values_list("id", flat=True))
-        total = len(ids)
+        def to_dec(x):
+            try:
+                return Decimal(str(x))
+            except Exception:
+                return Decimal("0")
 
-        existing_map = {
+        def to_bool(x):
+            s = str(x).strip().lower()
+            return s in ("1", "true", "t", "yes", "y")
+
+        return {
+            "contract_id": to_int(row.get("contract_id")),
+            "review_status": to_int(row.get("review_status"), 0),
+            "subsidy_amount": to_dec(row.get("subsidy_amount")),
+            "paid": to_bool(row.get("paid")),
+            "reason": (row.get("reason") or "").strip(),
+        }
+
+    def _upsert_from_dump(self, rows: list[dict], *, chunk_size: int, dry_run: bool):
+        # Build contract_id -> payload map; last one wins if duplicates present in dump
+        payloads: dict[int, dict] = {}
+        for r in rows:
+            cid = int(r.get("contract_id") or 0)
+            if cid > 0:
+                payloads[cid] = r
+
+        if not payloads:
+            return 0, 0
+
+        # Find CorporateContract PKs by contract_id
+        cid_list = list(payloads.keys())
+        cc_qs = CorporateContract.objects.filter(contract_id__in=cid_list).only("id", "contract_id")
+        cc_map = {cc.contract_id: cc.id for cc in cc_qs}
+
+        missing = [cid for cid in cid_list if cid not in cc_map]
+        if missing:
+            logger.warning("Contracts in dump not found in CorporateContract: %s (showing up to 20)", missing[:20])
+
+        # Prepare existing subsidy mapping
+        existing = {
             s.contract_id: s
-            for s in CorporateContractSubsidy.objects.filter(contract_id__in=ids).only(
-                "id", "contract_id", "review_status", "subsidy_amount", "paid", "reason", "exempt"
+            for s in CorporateContractSubsidy.objects.filter(contract_id__in=cc_map.values()).only(
+                "id", "contract_id", "review_status", "subsidy_amount", "paid", "reason"
             )
         }
 
-        now = timezone.now()
+        to_create: list[CorporateContractSubsidy] = []
+        to_update: list[CorporateContractSubsidy] = []
         created = 0
         updated = 0
-        to_create = []
-        to_update = []
 
-        # Try to load custom fields; if denied, returns {}
-        custom_map = self._fetch_custom_contract_fields(ids, external_table)
-
-        for i in range(0, total, chunk_size):
-            batch = list(
-                CorporateContract.objects.filter(id__in=ids[i : i + chunk_size]).only(
-                    "id", "status", "date_expired"
-                )
-            )
-            for cc in batch:
-                existing = existing_map.get(cc.id)
-
-                # Defaults if custom fields are unavailable for this contract
-                review_status, subsidy_amount, paid, reason = custom_map.get(
-                    cc.id, (0, Decimal("0"), False, "")
-                )
-
-                exempt_flag = cc.status == "deleted" and cc.date_expired is not None and cc.date_expired > now
-
-                if existing is None:
+        items = [(cid, payloads[cid]) for cid in cid_list if cid in cc_map]
+        for i in range(0, len(items), chunk_size):
+            batch = items[i : i + chunk_size]
+            for contract_id_val, data in batch:
+                cc_pk = cc_map[contract_id_val]
+                cur = existing.get(cc_pk)
+                if cur is None:
                     obj = CorporateContractSubsidy(
-                        contract_id=cc.id,
-                        review_status=review_status,
-                        subsidy_amount=subsidy_amount,
-                        paid=paid,
-                        reason=reason,
-                        exempt=exempt_flag,
+                        contract_id=cc_pk,
+                        review_status=data["review_status"],
+                        subsidy_amount=data["subsidy_amount"],
+                        paid=data["paid"],
+                        reason=data["reason"],
                     )
                     to_create.append(obj)
                     created += 1
                 else:
                     changed = False
-                    if existing.review_status != review_status:
-                        existing.review_status = review_status
-                        changed = True
-                    if existing.subsidy_amount != subsidy_amount:
-                        existing.subsidy_amount = subsidy_amount
-                        changed = True
-                    if existing.paid != paid:
-                        existing.paid = paid
-                        changed = True
-                    if existing.reason != reason:
-                        existing.reason = reason
-                        changed = True
-                    if existing.exempt != exempt_flag:
-                        existing.exempt = exempt_flag
-                        changed = True
+                    if cur.review_status != data["review_status"]:
+                        cur.review_status = data["review_status"]; changed = True
+                    if cur.subsidy_amount != data["subsidy_amount"]:
+                        cur.subsidy_amount = data["subsidy_amount"]; changed = True
+                    if cur.paid != data["paid"]:
+                        cur.paid = data["paid"]; changed = True
+                    if cur.reason != data["reason"]:
+                        cur.reason = data["reason"]; changed = True
                     if changed:
-                        to_update.append(existing)
+                        to_update.append(cur)
                         updated += 1
 
         if dry_run:
-            exempted = sum(1 for obj in to_create if obj.exempt) + sum(1 for obj in to_update if obj.exempt)
-            return created, updated, exempted
+            return created, updated
 
         if to_create:
             with transaction.atomic():
                 CorporateContractSubsidy.objects.bulk_create(to_create, ignore_conflicts=True)
-
         if to_update:
             with transaction.atomic():
                 CorporateContractSubsidy.objects.bulk_update(
-                    to_update, ["review_status", "subsidy_amount", "paid", "reason", "exempt"]
+                    to_update, ["review_status", "subsidy_amount", "paid", "reason"]
                 )
-
-        exempted = CorporateContractSubsidy.objects.filter(contract_id__in=ids, exempt=True).count()
-        return created, updated, exempted
+        return created, updated
