@@ -3,6 +3,13 @@
 
 {% block details %}
 <div class="container-xxl py-3">
+  <div id="loadingOverlay" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; z-index:2000;">
+    <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);" class="text-center">
+      <div class="spinner-border text-light" role="status" aria-hidden="true"></div>
+      <div class="mt-2 text-light small">{% trans "Loading…" %}</div>
+    </div>
+  </div>
+
   <div class="card mb-4">
     <div class="card-header d-flex justify-content-between align-items-center">
       <h3 class="m-0">{% trans "Subsidy Payments" %}</h3>
@@ -21,6 +28,7 @@
           </thead>
           <tbody>
             {% for r in rows %}
+            {% if r.approved_unpaid or r.approved_paid or r.total_approved %}
             <tr>
               <td>
                 {{ r.character }}
@@ -66,6 +74,7 @@
                   {% endif %}
               </td>
             </tr>
+            {% endif %}
             {% empty %}
             <tr >
               <td colspan="5" class="text-center text-muted">{% trans "No payment data to display." %}</td>
@@ -127,6 +136,34 @@
       } catch(e) {}
     }
 
+    const overlay = document.getElementById('loadingOverlay');
+    const showLoading = () => { if (overlay) overlay.style.display = 'block'; };
+    const hideLoading = () => { if (overlay) overlay.style.display = 'none'; };
+
+    // show during init
+    showLoading();
+
+    // Initialize tooltips safely
+    try {
+      if (window.bootstrap) {
+        document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+          try { new bootstrap.Tooltip(el); } catch(e){}
+        });
+      }
+    } catch(e) {}
+
+    // Toast helper
+    let toastInst;
+    function showToast() {
+      try {
+        if (!window.bootstrap) return;
+        const el = document.getElementById('copyToast');
+        if (!el) return;
+        toastInst = toastInst || new bootstrap.Toast(el, { delay: 1500 });
+        toastInst.show();
+      } catch(e) {}
+    }
+
     // Single delegated listener
     document.addEventListener('click', async (e) => {
       const copyEl = e.target.closest('.copyable');
@@ -143,6 +180,7 @@
         btn.disabled = true;
         btn.classList.add('disabled');
         try {
+          showLoading();
           const resp = await fetch("{% url 'aasubsidy:payments_mark_paid' %}", {
             method: 'POST',
             headers: {
@@ -161,6 +199,7 @@
           btn.classList.remove('disabled');
           console.error('Mark as Paid failed:', err);
           alert('Failed to mark as paid. Please try again.');
+          hideLoading();
         }
       }
     });
@@ -169,6 +208,7 @@
       const m = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
       return m ? decodeURIComponent(m[2]) : '';
     }
+    hideLoading();
   });
 })();
 </script>

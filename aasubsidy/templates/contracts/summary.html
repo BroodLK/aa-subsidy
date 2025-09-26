@@ -3,6 +3,12 @@
 
 {% block details %}
 <div class="container-xxl py-3">
+    <div id="loadingOverlay" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; z-index:2000;">
+      <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);" class="text-center">
+        <div class="spinner-border text-light" role="status" aria-hidden="true"></div>
+        <div class="mt-2 text-light small">{% trans "Loading…" %}</div>
+      </div>
+    </div>
     <div id="stockSection" class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
             <h3 class="m-0" id="stockHeader">{% trans "Doctrine Stock Summary" %}</h3>
@@ -77,6 +83,15 @@
                     </tr>
                     {% endfor %}
                     </tbody>
+                    <tfoot>
+                      <tr class="table-dark">
+                        <th class="text-end">{% trans "Totals" %}</th>
+                        <th class="text-end">{{ totals.requested|intcomma }}</th>
+                        <th class="text-end">{{ totals.available|intcomma }}</th>
+                        <th class="text-end">{{ totals.needed|intcomma }}</th>
+                        <th colspan="4"></th>
+                      </tr>
+                    </tfoot>
                 </table>
             </div>
         </div>
@@ -127,6 +142,13 @@
 (function() {
   const onReady = (fn) => (document.readyState !== 'loading') ? fn() : document.addEventListener('DOMContentLoaded', fn);
   onReady(() => {
+    const overlay = document.getElementById('loadingOverlay');
+    const showLoading = () => { if (overlay) overlay.style.display = 'block'; };
+    const hideLoading = () => { if (overlay) overlay.style.display = 'none'; };
+
+    // show while initializing
+    showLoading();
+
     if (window.bootstrap) {
       document.querySelectorAll('.claim-link').forEach(el => {
         try { new bootstrap.Tooltip(el, { container: 'body', html: true }); } catch (e) {}
@@ -200,6 +222,9 @@
 
     document.getElementById('claimForm').addEventListener('submit', async (e) => {
       e.preventDefault();
+      const qtyEl = document.getElementById('claimQty');
+      const fitIdEl = document.getElementById('claimFitId');
+      const errorEl = document.getElementById('claimError');
       const qty = parseInt(qtyEl.value || '0', 10);
       if (!(qty > 0)) {
         errorEl.textContent = 'Please enter a valid number.';
@@ -208,6 +233,7 @@
       }
       const fitId = parseInt(fitIdEl.value, 10);
       try {
+        showLoading();
         const resp = await fetch("{% url 'aasubsidy:save_claim' %}", {
           method: 'POST',
           headers: {
@@ -223,6 +249,7 @@
       } catch (err) {
         errorEl.textContent = err.message || 'Error saving claim.';
         errorEl.style.display = 'block';
+        hideLoading();
       }
     });
 
@@ -230,6 +257,7 @@
       const m = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
       return m ? decodeURIComponent(m[2]) : '';
     }
+    hideLoading();
   });
 })();
 </script>

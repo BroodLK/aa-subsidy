@@ -3,6 +3,13 @@
 
 {% block details %}
 <div class="container-xxl py-3">
+  <div id="loadingOverlay" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; z-index:2000;">
+    <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);" class="text-center">
+      <div class="spinner-border text-light" role="status" aria-hidden="true"></div>
+      <div class="mt-2 text-light small">{% trans "Loading…" %}</div>
+    </div>
+  </div>
+
   <div class="card mb-4">
     <div class="card-header d-flex justify-content-between align-items-center">
       <h3 class="m-0" id="contractsHeader">{% trans "Contracts Dashboard" %}</h3>
@@ -27,6 +34,9 @@
               <th data-col="paid">{% trans "Paid" %}</th>
               <th data-col="pct_jita">% Jita</th>
               <th data-col="actions">{% trans "Actions" %}</th>
+              <th class="text-center">
+                <span class="d-none d-md-inline">{% trans "Select" %}</span>
+              </th>
             </tr>
             <tr class="text-center small">
               <th><input class="form-control form-control-sm" data-filter="id" placeholder="…"></th>
@@ -64,6 +74,9 @@
               </th>
               <th><input class="form-control form-control-sm" data-filter="pct_jita" placeholder="…"></th>
               <th></th>
+              <th class="text-center">
+                <input type="checkbox" id="bulkCheckAll" class="form-check-input">
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -107,7 +120,7 @@
                 <span class="{% if row.paid %}text-success{% endif %}">{{ row.paid|yesno:"Yes,No" }}</span>
               </td>
               <td data-val="{{ row.pct_jita }}" data-basis="{{ row.basis_isk|default_if_none:'' }}" data-price="{{ row.price_listed|default_if_none:'' }}"
-                class="{% if row.pct_jita > 101 %}text-danger{% elif row.pct_jita < 99 %}text-warning{% else %}text-success{% endif %}">{{ row.pct_jita|default_if_none:0|floatformat:2 }}
+                class="{% if row.pct_jita > 101 %}text-danger{% elif row.pct_jita < 99 %}text-warning{% else %}text-success{% endif %}">{{ row.pct_jita|default_if_none:0|floatformat:2 }}%
               </td>
               <td>
                 <div class="btn-group btn-group-sm" role="group">
@@ -122,12 +135,33 @@
                   </button>
                 </div>
               </td>
+              <td class="text-center align-middle">
+                <input type="checkbox" class="form-check-input bulk-row-check" data-id="{{ row.id }}">
+              </td>
             </tr>
             {% empty %}
-            <tr><td colspan="14" class="text-center text-muted">{% trans "No contracts to display." %}</td></tr>
+            <tr><td colspan="15" class="text-center text-muted">{% trans "No contracts to display." %}</td></tr>
             {% endfor %}
           </tbody>
         </table>
+      </div>
+
+      <!-- Bulk actions toolbar -->
+      <div class="d-flex justify-content-between align-items-center mt-3">
+        <div class="small text-muted">
+          <span id="bulkSelectedCount">0</span> {% trans "selected" %}
+        </div>
+        <div class="btn-group btn-group-sm" role="group">
+          <button id="bulkApprove" type="button" class="btn btn-outline-success" {% if not perms.aasubsidy.review_subsidy %}disabled{% endif %}>
+            <i class="fa fa-check text-success me-1"></i>{% trans "Approve Selected" %}
+          </button>
+          <button id="bulkApproveWithComment" type="button" class="btn btn-outline-warning" {% if not perms.aasubsidy.review_subsidy %}disabled{% endif %}>
+            <i class="fa fa-check-double text-warning me-1"></i>{% trans "Approve + Comment Selected" %}
+          </button>
+          <button id="bulkDeny" type="button" class="btn btn-outline-danger" {% if not perms.aasubsidy.review_subsidy %}disabled{% endif %}>
+            <i class="fa fa-x text-danger me-1"></i>{% trans "Deny Selected" %}
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -181,6 +215,13 @@
 (function() {
   const onReady = (fn) => (document.readyState !== 'loading') ? fn() : document.addEventListener('DOMContentLoaded', fn);
   onReady(() => {
+    const overlay = document.getElementById('loadingOverlay');
+    const showLoading = () => { if (overlay) overlay.style.display = 'block'; };
+    const hideLoading = () => { if (overlay) overlay.style.display = 'none'; };
+
+    // Show while page initializes
+    showLoading();
+
     document.querySelectorAll('#contractsTable tbody tr').forEach(tr => {
       const subTd = tr.querySelector('td[data-suggested]');
       const input = tr.querySelector("input[data-field='subsidy_amount']");
@@ -191,21 +232,20 @@
         input.value = suggested.toFixed(2);
         subTd.setAttribute('data-val', suggested);
       }
-      // Optional: recompute % Jita client-side if basis and price are present
       const pctTd = tr.querySelector("td[data-price][data-basis]");
       if (pctTd) {
         const price = parseFloat(pctTd.getAttribute('data-price') || '0') || 0;
         const basis = parseFloat(pctTd.getAttribute('data-basis') || '0') || 0;
         if (price > 0 && basis > 0) {
           const pct = ((basis / price) * 100);
-          pctTd.textContent = pct.toFixed(2);
+          pctTd.textContent = pct.toFixed(2) + '%';
           pctTd.setAttribute('data-val', pct.toFixed(2));
         }
       }
     });
 
     const table = document.getElementById('contractsTable');
-    if (!table) return;
+    if (!table) { hideLoading(); return; }
 
     // Toast helper
     let toastInst;
@@ -236,7 +276,7 @@
       } catch (e) {}
     };
 
-    const applyFilters = () => {
+    let applyFilters = () => {
       const rows = table.tBodies[0].rows;
       for (const tr of rows) {
         let show = true;
@@ -272,7 +312,7 @@
       const td = tr.cells[idx];
       if (!td) return '';
       const v = td.getAttribute('data-val') || td.textContent || '';
-      const n = Number(String(v).replace(/[, ]/g, ''));
+      const n = Number(String(v).replace(/[, %]/g, ''));
       return isNaN(n) ? String(v).toLowerCase() : n;
     };
 
@@ -331,63 +371,163 @@
           } catch (_) {}
         }
       }
+
+      const actBtn = e.target.closest("button[data-action]");
+      if (actBtn) {
+        const id = actBtn.getAttribute('data-id');
+        const action = actBtn.getAttribute('data-action');
+        const subsidyInput = document.querySelector(`input[data-field="subsidy_amount"][data-id="${id}"]`);
+        const subsidy_amount = subsidyInput ? subsidyInput.value : '';
+        const post = (url, data) =>
+          fetch(url, { method:'POST', headers:{'X-Requested-With':'XMLHttpRequest','Content-Type':'application/x-www-form-urlencoded'}, body:new URLSearchParams(data) });
+
+        if (action === "approve") {
+          showLoading();
+          post("{% url 'aasubsidy:approve' 0 %}".replace("/0/", `/${id}/`), { subsidy_amount })
+            .then(() => location.reload())
+            .catch(() => location.reload());
+          return;
+        }
+        if (action === "approve_with_comment" || action === "deny") {
+          const url = action === "deny"
+            ? "{% url 'aasubsidy:deny' 0 %}".replace("/0/", `/${id}/`)
+            : "{% url 'aasubsidy:approve' 0 %}".replace("/0/", `/${id}/`);
+          const modalForm = document.getElementById('approvalModalForm');
+          modalForm.setAttribute('action', url);
+          document.getElementById('modalAction').value = action;
+          document.getElementById('modalContractId').value = id;
+          document.getElementById('modalSubsidyAmount').value = subsidy_amount || '';
+          const label = document.getElementById('approvalModalLabel');
+          if (label) label.textContent = action === 'deny' ? "{% trans 'Deny with Reason' %}" : "{% trans 'Approve with Comment' %}";
+          const modalEl = document.getElementById('approvalModal');
+          const modal = modalEl ? new bootstrap.Modal(modalEl) : null;
+          modal && modal.show();
+        }
+      }
     });
 
-    if (window.bootstrap) {
-      document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
-        try { new bootstrap.Tooltip(el, { container: 'body' }); } catch (e) {}
+    const modalForm = document.getElementById('approvalModalForm');
+    modalForm && modalForm.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      showLoading();
+      const data = new FormData(modalForm);
+      const url = modalForm.getAttribute('action') || '#';
+      fetch(url, { method:'POST', headers:{ 'X-Requested-With':'XMLHttpRequest' }, body:data })
+        .then(() => location.reload())
+        .catch(() => location.reload());
+    });
+
+    // ===== Bulk actions logic (with spinner) =====
+    const bulkCheckAll = document.getElementById('bulkCheckAll');
+    const bulkSelectedCountEl = document.getElementById('bulkSelectedCount');
+    const bulkApproveBtn = document.getElementById('bulkApprove');
+    const bulkApproveWithCommentBtn = document.getElementById('bulkApproveWithComment');
+    const bulkDenyBtn = document.getElementById('bulkDeny');
+
+    function bulkRowChecks() {
+      return Array.from(document.querySelectorAll('.bulk-row-check'));
+    }
+    function getSelectedIds() {
+      return bulkRowChecks()
+        .filter(cb => cb.checked && cb.closest('tr')?.style.display !== 'none')
+        .map(cb => cb.getAttribute('data-id'))
+        .filter(Boolean);
+    }
+    function updateSelectedCount() {
+      const visible = bulkRowChecks().filter(cb => cb.closest('tr')?.style.display !== 'none');
+      const checked = visible.filter(cb => cb.checked);
+      if (bulkSelectedCountEl) bulkSelectedCountEl.textContent = String(checked.length);
+      if (bulkCheckAll) {
+        bulkCheckAll.checked = visible.length > 0 && checked.length === visible.length;
+        bulkCheckAll.indeterminate = checked.length > 0 && checked.length < visible.length;
+      }
+    }
+    const postForm = (url, data) =>
+      fetch(url, { method:'POST', headers:{ 'X-Requested-With':'XMLHttpRequest','Content-Type':'application/x-www-form-urlencoded' }, body:new URLSearchParams(data) });
+
+    async function runBulkApprove(ids) {
+      const reqs = ids.map(id => {
+        const input = document.querySelector(`input[data-field="subsidy_amount"][data-id="${id}"]`);
+        const subsidy_amount = input ? input.value : '';
+        const url = "{% url 'aasubsidy:approve' 0 %}".replace("/0/", `/${id}/`);
+        return postForm(url, { subsidy_amount });
+      });
+      await Promise.allSettled(reqs);
+    }
+    async function runBulkApproveWithComment(ids, comment) {
+      const reqs = ids.map(id => {
+        const input = document.querySelector(`input[data-field="subsidy_amount"][data-id="${id}"]`);
+        const subsidy_amount = input ? input.value : '';
+        const url = "{% url 'aasubsidy:approve' 0 %}".replace("/0/", `/${id}/`);
+        return postForm(url, { subsidy_amount, comment });
+      });
+      await Promise.allSettled(reqs);
+    }
+    async function runBulkDeny(ids, reason) {
+      const reqs = ids.map(id => {
+        const input = document.querySelector(`input[data-field="subsidy_amount"][data-id="${id}"]`);
+        const subsidy_amount = input ? input.value : '';
+        const url = "{% url 'aasubsidy:deny' 0 %}".replace("/0/", `/${id}/`);
+        return postForm(url, { subsidy_amount, comment: reason });
+      });
+      await Promise.allSettled(reqs);
+    }
+
+    if (bulkCheckAll) {
+      bulkCheckAll.addEventListener('change', () => {
+        const visible = bulkRowChecks().filter(cb => cb.closest('tr')?.style.display !== 'none');
+        visible.forEach(cb => { cb.checked = bulkCheckAll.checked; });
+        updateSelectedCount();
+      });
+    }
+    document.addEventListener('change', (e) => {
+      if (e.target && e.target.classList && e.target.classList.contains('bulk-row-check')) {
+        updateSelectedCount();
+      }
+    });
+    updateSelectedCount();
+
+    if (bulkApproveBtn) {
+      bulkApproveBtn.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const ids = getSelectedIds();
+        if (!ids.length) { alert("{% trans 'Select at least one row.' %}"); return; }
+        showLoading();
+        await runBulkApprove(ids);
+        location.reload();
+      });
+    }
+    if (bulkApproveWithCommentBtn) {
+      bulkApproveWithCommentBtn.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const ids = getSelectedIds();
+        if (!ids.length) { alert("{% trans 'Select at least one row.' %}"); return; }
+        const comment = window.prompt("{% trans 'Enter comment (optional):' %}", "");
+        if (comment === null) return;
+        showLoading();
+        await runBulkApproveWithComment(ids, (comment || '').trim());
+        location.reload();
+      });
+    }
+    if (bulkDenyBtn) {
+      bulkDenyBtn.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const ids = getSelectedIds();
+        if (!ids.length) { alert("{% trans 'Select at least one row.' %}"); return; }
+        const reason = window.prompt("{% trans 'Enter reason for denial (required):' %}", "");
+        if (reason === null) return;
+        if (!reason.trim()) { alert("{% trans 'Reason is required.' %}"); return; }
+        showLoading();
+        await runBulkDeny(ids, reason.trim());
+        location.reload();
       });
     }
 
-    const modalEl = document.getElementById('approvalModal');
-    const modalForm = document.getElementById('approvalModalForm');
-    const modal = modalEl ? new bootstrap.Modal(modalEl) : null;
-
-    function post(url, data) {
-      fetch(url, {
-        method: 'POST',
-        headers: { 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams(data)
-      }).then(() => location.reload()).catch(() => location.reload());
-    }
-
-    document.addEventListener("click", (e) => {
-      const btn = e.target.closest("button[data-action]");
-      if (!btn) return;
-      const id = btn.dataset.id;
-      const action = btn.dataset.action;
-
-      const subsidyInput = document.querySelector(`input[data-field="subsidy_amount"][data-id="${id}"]`);
-      const subsidy_amount = subsidyInput ? subsidyInput.value : '';
-
-      if (action === "approve") {
-        post("{% url 'aasubsidy:approve' 0 %}".replace("/0/", `/${id}/`), { subsidy_amount });
-        return;
-      }
-      if (action === "approve_with_comment" || action === "deny") {
-        const url = action === "deny"
-          ? "{% url 'aasubsidy:deny' 0 %}".replace("/0/", `/${id}/`)
-          : "{% url 'aasubsidy:approve' 0 %}".replace("/0/", `/${id}/`);
-        modalForm.setAttribute('action', url);
-        document.getElementById('modalAction').value = action;
-        document.getElementById('modalContractId').value = id;
-        document.getElementById('modalSubsidyAmount').value = subsidy_amount || '';
-        const label = document.getElementById('approvalModalLabel');
-        if (label) label.textContent = action === 'deny' ? "{% trans 'Deny with Reason' %}" : "{% trans 'Approve with Comment' %}";
-        modal && modal.show();
-      }
-    });
-
-    modalForm && modalForm.addEventListener('submit', (ev) => {
-      ev.preventDefault();
-      const data = new FormData(modalForm);
-      const url = modalForm.getAttribute('action') || '#';
-      fetch(url, {
-        method: 'POST',
-        headers: { 'X-Requested-With': 'XMLHttpRequest' },
-        body: data
-      }).then(r => r.json()).then(() => location.reload()).catch(() => location.reload());
-    });
+    // Hide loader when initial JS work completes
+    hideLoading();
   });
 })();
 </script>

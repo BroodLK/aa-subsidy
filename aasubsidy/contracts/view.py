@@ -31,7 +31,9 @@ def get_main_for_character(character: EveCharacter):
     ):
         return None
 
-class MainView(PermissionRequiredMixin, TemplateView):
+class MainView(PermissionRequiredMixin, TemplateView): 
+
+
     template_name = "contracts/summary.html"
     permission_required = "aasubsidy.basic_access"
 
@@ -41,7 +43,17 @@ class MainView(PermissionRequiredMixin, TemplateView):
         start = end - timedelta(days=3000)
         from ..contracts import summaries as summaries_mod
         summaries_mod.doctrine_stock_summary.request_user_id = self.request.user.id if self.request.user.is_authenticated else None
-        ctx["rows"] = doctrine_stock_summary(start, end)
+        rows = doctrine_stock_summary(start, end)
+        total_requested = sum(r.get("stock_requested", 0) for r in rows)
+        total_available = sum(r.get("stock_available", 0) for r in rows)
+        total_needed = sum(r.get("stock_needed", 0) for r in rows)
+        ctx["rows"] = rows
+        ctx["totals"] = {
+            "requested": total_requested,
+            "available": total_available,
+            "needed": total_needed,
+        }
+
         if self.request.user.is_authenticated:
             pref = UserTablePreference.objects.filter(user=self.request.user, table_key="contracts").first()
             if pref:
