@@ -152,18 +152,7 @@
       }
     } catch(e) {}
 
-    // Toast helper
-    let toastInst;
-    function showToast() {
-      try {
-        if (!window.bootstrap) return;
-        const el = document.getElementById('copyToast');
-        if (!el) return;
-        toastInst = toastInst || new bootstrap.Toast(el, { delay: 1500 });
-        toastInst.show();
-      } catch(e) {}
-    }
-
+    // ... existing code ...
     // Single delegated listener
     document.addEventListener('click', async (e) => {
       const copyEl = e.target.closest('.copyable');
