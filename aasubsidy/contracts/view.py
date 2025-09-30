@@ -1,31 +1,42 @@
+# file: aasubsidy/contracts/view.py
+from __future__ import annotations
+
 from datetime import timedelta
-from django.utils import timezone
-from django.contrib.auth.mixins import PermissionRequiredMixin
-from django.views.generic import TemplateView
-from django.views import View
-from django.http import JsonResponse, Http404
-from django.utils.decorators import method_decorator
-from django.views.decorators.csrf import csrf_exempt
-from django.db import transaction
-from django.contrib import messages
 from decimal import Decimal, InvalidOperation
+from typing import List, Optional
+
+from django.contrib import messages
+from django.contrib.auth.mixins import LoginRequiredMixin, PermissionRequiredMixin
+from django.db import transaction
+from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404
-from django.contrib.auth.mixins import LoginRequiredMixin
-from ..contracts.summaries import doctrine_stock_summary
-from ..contracts.reviews import reviewer_table
-from ..models import CorporateContractSubsidy, UserTablePreference
-from ..models import FittingClaim
-from fittings.models import Fitting
-from allianceauth.eveonline.models import EveCharacter
+from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django.views import View
+from django.views.decorators.csrf import csrf_exempt
+from django.views.generic import TemplateView
+
 from allianceauth.authentication.models import CharacterOwnership
+from allianceauth.eveonline.models import EveCharacter
 from corptools.models import CorporateContract
+from fittings.models import Fitting
+
+from ..contracts.reviews import reviewer_table
+from ..contracts.summaries import doctrine_stock_summary
+from ..models import CorporateContractSubsidy, FittingClaim, UserTablePreference
 from .payments import aggregate_payments_to_main, mark_all_unpaid_for_main_as_paid
 
-def _all_character_ids_for_user(user) -> list[int]:
+
+def _all_character_ids_for_user(user) -> List[int]:
     try:
-        return list(EveCharacter.objects.filter(character_ownership__user=user).values_list("eve_id", flat=True))
+        return list(
+            EveCharacter.objects.filter(
+                character_ownership__user=user
+            ).values_list("character_id", flat=True)
+        )
     except Exception:
         return []
+
 
 def get_main_for_character(character: EveCharacter):
     try:
@@ -37,9 +48,8 @@ def get_main_for_character(character: EveCharacter):
     ):
         return None
 
+
 class MainView(PermissionRequiredMixin, TemplateView):
-
-
     template_name = "contracts/summary.html"
     permission_required = "aasubsidy.basic_access"
 
@@ -47,12 +57,22 @@ class MainView(PermissionRequiredMixin, TemplateView):
         ctx = super().get_context_data(**kwargs)
         end = timezone.now()
         start = end - timedelta(days=3000)
-        from ..contracts import summaries as summaries_mod
-        summaries_mod.doctrine_stock_summary.request_user_id = self.request.user.id if self.request.user.is_authenticated else None
+
+        # pass request user to the summary function if supported
+        try:
+            from ..contracts import summaries as summaries_mod
+
+            summaries_mod.doctrine_stock_summary.request_user_id = (
+                self.request.user.id if self.request.user.is_authenticated else None
+            )
+        except Exception:
+            pass
+
         rows = doctrine_stock_summary(start, end)
-        total_requested = sum(r.get("stock_requested", 0) for r in rows)
-        total_available = sum(r.get("stock_available", 0) for r in rows)
-        total_needed = sum(r.get("stock_needed", 0) for r in rows)
+        total_requested = sum(int(r.get("stock_requested", 0) or 0) for r in rows)
+        total_available = sum(int(r.get("stock_available", 0) or 0) for r in rows)
+        total_needed = sum(int(r.get("stock_needed", 0) or 0) for r in rows)
+
         ctx["rows"] = rows
         ctx["totals"] = {
             "requested": total_requested,
@@ -61,14 +81,18 @@ class MainView(PermissionRequiredMixin, TemplateView):
         }
 
         if self.request.user.is_authenticated:
-            pref = UserTablePreference.objects.filter(user=self.request.user, table_key="contracts").first()
+            pref = UserTablePreference.objects.filter(
+                user=self.request.user, table_key="contracts"
+            ).first()
             if pref:
                 ctx["table_pref"] = {
                     "sort_idx": pref.sort_idx,
                     "sort_dir": pref.sort_dir,
                     "filters": pref.filters_json,
                 }
+
         return ctx
+
 
 class UserStatsView(LoginRequiredMixin, PermissionRequiredMixin, TemplateView):
     template_name = "contracts/user_stats.html"
@@ -76,16 +100,18 @@ class UserStatsView(LoginRequiredMixin, PermissionRequiredMixin, TemplateView):
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
+
         char_eve_ids = _all_character_ids_for_user(self.request.user)
         contracts_qs = (
-            CorporateContract.objects
-            .filter(issuer_name__eve_id__in=char_eve_ids)
+            CorporateContract.objects.filter(issuer_name__eve_id__in=char_eve_ids)
             .select_related("issuer_name", "start_location_name", "aasubsidy_meta")
             .order_by("-date_issued")
         )
+
         rows = []
-        totals_by_char = {}
-        contract_count_by_char = {}
+        totals_by_char: dict[str, int] = {}
+        contract_count_by_char: dict[str, int] = {}
+
         for c in contracts_qs:
             meta = getattr(c, "aasubsidy_meta", None)
             subsidy_amount = float(getattr(meta, "subsidy_amount", 0) or 0)
@@ -94,37 +120,47 @@ class UserStatsView(LoginRequiredMixin, PermissionRequiredMixin, TemplateView):
             paid = bool(getattr(meta, "paid", False))
             exempt = bool(getattr(meta, "exempt", False))
             issuer = getattr(c.issuer_name, "name", "Unknown")
-            rows.append({
-                "id": c.contract_id,
-                "issuer": issuer,
-                "date_issued": c.date_issued,
-                "price_listed": int(c.price or 0),
-                "status": c.status,
-                "title": c.title or "",
-                "station": getattr(c.start_location_name, "location_name", "") or "",
-                "review_status": status_label,
-                "subsidy_amount": subsidy_amount,
-                "paid": paid,
-                "exempt": exempt,
-                "reason": getattr(meta, "reason", "") if meta else "",
-            })
+
+            rows.append(
+                {
+                    "id": c.contract_id,
+                    "issuer": issuer,
+                    "date_issued": c.date_issued,
+                    "price_listed": int(c.price or 0),
+                    "status": c.status,
+                    "title": c.title or "",
+                    "station": getattr(c.start_location_name, "location_name", "") or "",
+                    "review_status": status_label,
+                    "subsidy_amount": subsidy_amount,
+                    "paid": paid,
+                    "exempt": exempt,
+                    "reason": getattr(meta, "reason", "") if meta else "",
+                }
+            )
+
             if issuer not in totals_by_char:
                 totals_by_char[issuer] = 0
                 contract_count_by_char[issuer] = 0
+
             if review_status == 1:
                 totals_by_char[issuer] += int(subsidy_amount or 0)
+
             contract_count_by_char[issuer] += 1
 
         per_character = []
         for name in sorted(totals_by_char.keys(), key=str.lower):
-            per_character.append({
-                "character": name,
-                "approved_total": totals_by_char[name],
-                "contract_count": contract_count_by_char.get(name, 0),
-            })
+            per_character.append(
+                {
+                    "character": name,
+                    "approved_total": totals_by_char[name],
+                    "contract_count": contract_count_by_char.get(name, 0),
+                }
+            )
+
         ctx["per_character"] = per_character
         ctx["contracts"] = rows
         return ctx
+
 
 @method_decorator(csrf_exempt, name="dispatch")
 class SaveClaimView(PermissionRequiredMixin, View):
@@ -133,26 +169,34 @@ class SaveClaimView(PermissionRequiredMixin, View):
     def post(self, request):
         try:
             import json
+
             data = json.loads(request.body.decode("utf-8") or "{}")
         except Exception:
             return JsonResponse({"ok": False, "error": "invalid_json"}, status=400)
 
-        fit_id = int(data.get("fit_id") or 0)
-        qty = int(data.get("quantity") or 0)
+        try:
+            fit_id = int(data.get("fit_id") or 0)
+            qty = int(data.get("quantity") or 0)
+        except Exception:
+            return JsonResponse({"ok": False, "error": "invalid_params"}, status=400)
+
         if fit_id <= 0 or qty <= 0:
             return JsonResponse({"ok": False, "error": "invalid_params"}, status=400)
 
         fit = get_object_or_404(Fitting, pk=fit_id)
 
-        main_char = None
         try:
-            first_char = EveCharacter.objects.filter(character_ownership__user=request.user).first()
+            first_char = EveCharacter.objects.filter(
+                character_ownership__user=request.user
+            ).first()
             if first_char:
-                main_char = get_main_for_character(first_char)
+                _ = get_main_for_character(first_char)
         except Exception:
-            main_char = None
+            pass
 
-        claim, created = FittingClaim.objects.get_or_create(fitting=fit, user=request.user, defaults={"quantity": qty})
+        claim, created = FittingClaim.objects.get_or_create(
+            fitting=fit, user=request.user, defaults={"quantity": qty}
+        )
         if not created:
             claim.quantity = qty
             claim.save(update_fields=["quantity"])
@@ -161,6 +205,7 @@ class SaveClaimView(PermissionRequiredMixin, View):
             messages.success(request, "Claim made.")
 
         return JsonResponse({"ok": True, "fit_id": fit_id, "quantity": claim.quantity})
+
 
 class ReviewerView(PermissionRequiredMixin, TemplateView):
     template_name = "contracts/review.html"
@@ -171,8 +216,11 @@ class ReviewerView(PermissionRequiredMixin, TemplateView):
         end = timezone.now()
         start = end - timedelta(days=30)
         ctx["contracts"] = reviewer_table(start, end, corporation_id=1)
+
         if self.request.user.is_authenticated:
-            pref = UserTablePreference.objects.filter(user=self.request.user, table_key="contracts").first()
+            pref = UserTablePreference.objects.filter(
+                user=self.request.user, table_key="contracts"
+            ).first()
             if pref:
                 ctx["table_pref"] = {
                     "sort_idx": pref.sort_idx,
@@ -181,35 +229,56 @@ class ReviewerView(PermissionRequiredMixin, TemplateView):
                 }
         return ctx
 
+
 @method_decorator(csrf_exempt, name="dispatch")
 class ApproveView(PermissionRequiredMixin, View):
     permission_required = "aasubsidy.review_subsidy"
 
     @transaction.atomic
     def post(self, request, contract_id: int):
-        from corptools.models import CorporateContract
         try:
-            cc = CorporateContract.objects.select_for_update().get(contract_id=contract_id, corporation_id=1)
+            cc = (
+                CorporateContract.objects.select_for_update()
+                .only("id", "contract_id")
+                .get(contract_id=contract_id, corporation_id=1)
+            )
         except CorporateContract.DoesNotExist:
             messages.error(request, "Contract not found.")
             raise Http404
 
-        meta, _ = CorporateContractSubsidy.objects.select_for_update().get_or_create(contract_id=cc.pk)
+        meta, _ = CorporateContractSubsidy.objects.select_for_update().get_or_create(
+            contract_id=cc.pk
+        )
 
-        reason = request.POST.get("comment") or request.POST.get("reason") or meta.reason
+        reason = (
+            request.POST.get("comment")
+            or request.POST.get("reason")
+            or meta.reason
+        )
+
         subsidy_raw = request.POST.get("subsidy_amount")
         if subsidy_raw is not None:
             try:
                 meta.subsidy_amount = Decimal(subsidy_raw)
             except (InvalidOperation, TypeError):
                 messages.error(request, "Invalid subsidy amount.")
-                return JsonResponse({"ok": False, "error": "invalid subsidy_amount"}, status=400)
+                return JsonResponse(
+                    {"ok": False, "error": "invalid_subsidy_amount"}, status=400
+                )
 
         meta.review_status = 1
         meta.reason = reason
         meta.save(update_fields=["review_status", "reason", "subsidy_amount"])
+
         messages.success(request, "Contract approved.")
-        return JsonResponse({"ok": True, "review_status": "Approved", "subsidy_amount": str(meta.subsidy_amount)})
+        return JsonResponse(
+            {
+                "ok": True,
+                "review_status": "Approved",
+                "subsidy_amount": str(meta.subsidy_amount or "0"),
+            }
+        )
+
 
 @method_decorator(csrf_exempt, name="dispatch")
 class DenyView(PermissionRequiredMixin, View):
@@ -217,18 +286,25 @@ class DenyView(PermissionRequiredMixin, View):
 
     @transaction.atomic
     def post(self, request, contract_id: int):
-        from corptools.models import CorporateContract
         try:
-            cc = CorporateContract.objects.select_for_update().get(contract_id=contract_id, corporation_id=1)
+            cc = (
+                CorporateContract.objects.select_for_update()
+                .only("id", "contract_id")
+                .get(contract_id=contract_id, corporation_id=1)
+            )
         except CorporateContract.DoesNotExist:
             messages.error(request, "Contract not found.")
             raise Http404
 
-        meta, _ = CorporateContractSubsidy.objects.select_for_update().get_or_create(contract_id=cc.pk)
+        meta, _ = CorporateContractSubsidy.objects.select_for_update().get_or_create(
+            contract_id=cc.pk
+        )
 
-        reason = request.POST.get("comment") or request.POST.get("reason") or ""
+        reason = (request.POST.get("comment") or request.POST.get("reason") or "").strip()
         if not reason:
-            return JsonResponse({"ok": False, "error": "reason_required"}, status=400)
+            return JsonResponse(
+                {"ok": False, "error": "reason_required"}, status=400
+            )
 
         subsidy_raw = request.POST.get("subsidy_amount")
         if subsidy_raw is not None:
@@ -236,13 +312,23 @@ class DenyView(PermissionRequiredMixin, View):
                 meta.subsidy_amount = Decimal(subsidy_raw)
             except (InvalidOperation, TypeError):
                 messages.error(request, "Invalid subsidy amount.")
-                return JsonResponse({"ok": False, "error": "invalid subsidy_amount"}, status=400)
+                return JsonResponse(
+                    {"ok": False, "error": "invalid_subsidy_amount"}, status=400
+                )
 
         meta.review_status = -1
         meta.reason = reason
         meta.save(update_fields=["review_status", "reason", "subsidy_amount"])
+
         messages.success(request, "Contract denied.")
-        return JsonResponse({"ok": True, "review_status": "Rejected", "subsidy_amount": str(meta.subsidy_amount)})
+        return JsonResponse(
+            {
+                "ok": True,
+                "review_status": "Rejected",
+                "subsidy_amount": str(meta.subsidy_amount or "0"),
+            }
+        )
+
 
 @method_decorator(csrf_exempt, name="dispatch")
 class SaveTablePreferenceView(PermissionRequiredMixin, View):
@@ -251,23 +337,36 @@ class SaveTablePreferenceView(PermissionRequiredMixin, View):
     def post(self, request):
         try:
             import json
+
             payload = json.loads(request.body.decode("utf-8") or "{}")
         except Exception:
             payload = {}
-        sort_idx = int(payload.get("sort_idx") or 0)
+
+        try:
+            sort_idx = int(payload.get("sort_idx") or 0)
+        except Exception:
+            sort_idx = 0
+
         sort_dir = str(payload.get("sort_dir") or "desc")[:4]
-        filters_json = payload.get("filters") or {}
+        filters_json_obj = payload.get("filters") or {}
+
         try:
             import json as _json
-            filters_str = _json.dumps(filters_json)
+
+            filters_str = _json.dumps(filters_json_obj)
         except Exception:
             filters_str = "{}"
-        pref, _ = UserTablePreference.objects.get_or_create(user=request.user, table_key="contracts")
+
+        pref, _ = UserTablePreference.objects.get_or_create(
+            user=request.user, table_key="contracts"
+        )
         pref.sort_idx = sort_idx
         pref.sort_dir = sort_dir
         pref.filters_json = filters_str
         pref.save(update_fields=["sort_idx", "sort_dir", "filters_json"])
+
         return JsonResponse({"ok": True})
+
 
 class PaymentsView(PermissionRequiredMixin, TemplateView):
     template_name = "contracts/payments.html"
@@ -280,6 +379,7 @@ class PaymentsView(PermissionRequiredMixin, TemplateView):
         ctx["totals"] = totals
         return ctx
 
+
 @method_decorator(csrf_exempt, name="dispatch")
 class MarkPaidView(PermissionRequiredMixin, View):
     permission_required = "aasubsidy.subsidy_admin"
@@ -288,13 +388,19 @@ class MarkPaidView(PermissionRequiredMixin, View):
         name = (request.POST.get("character") or "").strip()
         if not name:
             messages.error(request, "Missing character name.")
-            return JsonResponse({"ok": False, "error": "missing_character"}, status=400)
+            return JsonResponse(
+                {"ok": False, "error": "missing_character"}, status=400
+            )
 
         count = mark_all_unpaid_for_main_as_paid(name)
 
         if count > 0:
-            messages.success(request, f"Marked {count} approved subsidies as paid for {name}.")
+            messages.success(
+                request, f"Marked {count} approved subsidies as paid for {name}."
+            )
         else:
-            messages.info(request, f"No unpaid approved subsidies found for {name}.")
+            messages.info(
+                request, f"No unpaid approved subsidies found for {name}."
+            )
 
         return JsonResponse({"ok": True, "updated": count})
