@@ -116,43 +116,32 @@ def mark_all_unpaid_for_main_as_paid(main_character_name: str) -> int:
     Special rule: if a subsidy is exempt and currently positive, flip it to negative when marking as paid.
     """
     try:
-        contract_pk_set: set[int] = set()
-
         user_ids = list(
             CharacterOwnership.objects.filter(
                 user__profile__main_character__character_name=main_character_name
             ).values_list("user_id", flat=True).distinct()
         )
 
+        issuer_eve_ids: list[int] = []
         if user_ids:
             issuer_eve_ids = list(
                 EveCharacter.objects.filter(
                     character_ownership__user_id__in=user_ids
                 ).values_list("eve_id", flat=True)
             )
-            if issuer_eve_ids:
-                entity_ids = set(EveEntity.objects.filter(id__in=issuer_eve_ids).values_list("id", flat=True))
-                entity_ids.update(EveEntity.objects.filter(eve_id__in=issuer_eve_ids).values_list("id", flat=True))
-                if entity_ids:
-                    contract_pk_set.update(
-                        CorporateContract.objects.filter(
-                            issuer_name_id__in=list(entity_ids),
-                            corporation_id=1,
-                        ).values_list("pk", flat=True)
-                    )
 
-        if not contract_pk_set:
-            contract_pk_set.update(
-                CorporateContract.objects.filter(
-                    issuer_name__name=main_character_name, corporation_id=1
-                ).values_list("pk", flat=True)
-            )
+        contracts_qs = CorporateContract.objects.all()
+        if issuer_eve_ids:
+            contracts_qs = contracts_qs.filter(issuer_name__eve_id__in=issuer_eve_ids)
+        else:
+            contracts_qs = contracts_qs.filter(issuer_name__name__iexact=main_character_name)
 
-        if not contract_pk_set:
+        contract_pk_list = list(contracts_qs.values_list("pk", flat=True))
+        if not contract_pk_list:
             return 0
 
         qs = CorporateContractSubsidy.objects.filter(
-            review_status=1, paid=False, contract_id__in=list(contract_pk_set)
+            review_status=1, paid=False, contract_id__in=contract_pk_list
         ).only("id", "subsidy_amount", "exempt")
 
         updated = 0
@@ -168,7 +157,6 @@ def mark_all_unpaid_for_main_as_paid(main_character_name: str) -> int:
             for s in to_flip:
                 s.paid = True
             CorporateContractSubsidy.objects.bulk_update(to_flip, ["subsidy_amount", "paid"])
-
             updated += len(to_flip)
 
             flipped_ids = {s.id for s in to_flip}
