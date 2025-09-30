@@ -103,7 +103,9 @@ class UserStatsView(LoginRequiredMixin, PermissionRequiredMixin, TemplateView):
 
         char_eve_ids = _all_character_ids_for_user(self.request.user)
         contracts_qs = (
-            CorporateContract.objects.filter(issuer_name__eve_id__in=char_eve_ids)
+            CorporateContract.objects.filter(
+                issuer_name__eve_id__in=char_eve_ids,
+                corporation_id=1)
             .select_related("issuer_name", "start_location_name", "aasubsidy_meta")
             .order_by("-date_issued")
         )
