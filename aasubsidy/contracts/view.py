@@ -21,6 +21,12 @@ from allianceauth.authentication.models import CharacterOwnership
 from corptools.models import CorporateContract
 from .payments import aggregate_payments_to_main, mark_all_unpaid_for_main_as_paid
 
+def _all_character_ids_for_user(user) -> list[int]:
+    try:
+        return list(EveCharacter.objects.filter(character_ownership__user=user).values_list("eve_id", flat=True))
+    except Exception:
+        return []
+
 def get_main_for_character(character: EveCharacter):
     try:
         return character.character_ownership.user.profile.main_character
@@ -31,7 +37,7 @@ def get_main_for_character(character: EveCharacter):
     ):
         return None
 
-class MainView(PermissionRequiredMixin, TemplateView): 
+class MainView(PermissionRequiredMixin, TemplateView):
 
 
     template_name = "contracts/summary.html"
@@ -62,6 +68,62 @@ class MainView(PermissionRequiredMixin, TemplateView):
                     "sort_dir": pref.sort_dir,
                     "filters": pref.filters_json,
                 }
+        return ctx
+
+class UserStatsView(LoginRequiredMixin, PermissionRequiredMixin, TemplateView):
+    template_name = "contracts/user_stats.html"
+    permission_required = "aasubsidy.basic_access"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        char_eve_ids = _all_character_ids_for_user(self.request.user)
+        contracts_qs = (
+            CorporateContract.objects
+            .filter(issuer_name__eve_id__in=char_eve_ids)
+            .select_related("issuer_name", "start_location_name", "aasubsidy_meta")
+            .order_by("-date_issued")
+        )
+        rows = []
+        totals_by_char = {}
+        contract_count_by_char = {}
+        for c in contracts_qs:
+            meta = getattr(c, "aasubsidy_meta", None)
+            subsidy_amount = float(getattr(meta, "subsidy_amount", 0) or 0)
+            review_status = getattr(meta, "review_status", 0)
+            status_label = {1: "Approved", -1: "Rejected"}.get(review_status, "Pending")
+            paid = bool(getattr(meta, "paid", False))
+            exempt = bool(getattr(meta, "exempt", False))
+            issuer = getattr(c.issuer_name, "name", "Unknown")
+            rows.append({
+                "id": c.contract_id,
+                "issuer": issuer,
+                "date_issued": c.date_issued,
+                "price_listed": int(c.price or 0),
+                "status": c.status,
+                "title": c.title or "",
+                "station": getattr(c.start_location_name, "location_name", "") or "",
+                "review_status": status_label,
+                "subsidy_amount": subsidy_amount,
+                "paid": paid,
+                "exempt": exempt,
+                "reason": getattr(meta, "reason", "") if meta else "",
+            })
+            if issuer not in totals_by_char:
+                totals_by_char[issuer] = 0
+                contract_count_by_char[issuer] = 0
+            if review_status == 1:
+                totals_by_char[issuer] += int(subsidy_amount or 0)
+            contract_count_by_char[issuer] += 1
+
+        per_character = []
+        for name in sorted(totals_by_char.keys(), key=str.lower):
+            per_character.append({
+                "character": name,
+                "approved_total": totals_by_char[name],
+                "contract_count": contract_count_by_char.get(name, 0),
+            })
+        ctx["per_character"] = per_character
+        ctx["contracts"] = rows
         return ctx
 
 @method_decorator(csrf_exempt, name="dispatch")

@@ -36,6 +36,12 @@
                href="{% url 'aasubsidy:payments' %}">
                 {% trans "Payments" %}</a>
         </li>
+        <li class="nav-item">
+            <a class="nav-link {% if request.resolver_match.url_name == 'user_stats' %}active{% endif %}"
+               href="{% url 'aasubsidy:user_stats' %}">
+                {% trans "My Stats" %}
+            </a>
+        </li>
         {% endif %}
 
         {% if perms.aasubsidy.subsidy_admin %}

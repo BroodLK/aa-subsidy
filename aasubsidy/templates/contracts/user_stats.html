@@ -1,0 +1,88 @@
+{% extends 'contracts/base.html' %}
+{% load i18n humanize %}
+
+{% block details %}
+<div class="container-xxl py-3">
+  <div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <h3 class="m-0">{% trans "Your Subsidy Stats" %}</h3>
+    </div>
+    <div class="card-body p-2">
+      <div class="table-responsive mb-3">
+        <table class="table table-sm align-middle mb-0 table-bordered">
+          <thead class="table-dark">
+            <tr class="text-center">
+              <th scope="col">{% trans "Character" %}</th>
+              <th scope="col">{% trans "Contracts" %}</th>
+              <th scope="col">{% trans "Approved Total (ISK)" %}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in per_character %}
+            <tr>
+              <td>{{ r.character }}</td>
+              <td class="text-end">{{ r.contract_count|intcomma }}</td>
+              <td class="text-end">{{ r.approved_total|intcomma }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="3" class="text-center text-muted">{% trans "No data available." %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <h5 class="mb-2">{% trans "Your Contracts" %}</h5>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0 table-bordered">
+          <thead class="table-dark">
+            <tr class="text-center">
+              <th>{% trans "ID" %}</th>
+              <th>{% trans "Issuer" %}</th>
+              <th>{% trans "Date Issued" %}</th>
+              <th>{% trans "Price Listed" %}</th>
+              <th>{% trans "Status" %}</th>
+              <th>{% trans "Title" %}</th>
+              <th>{% trans "Station" %}</th>
+              <th>{% trans "Review Status" %}</th>
+              <th>{% trans "Subsidy Amount" %}</th>
+              <th>{% trans "Paid" %}</th>
+              <th>{% trans "Exempt" %}</th>
+              <th>{% trans "Reason" %}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in contracts %}
+            <tr class="text-center">
+              <td>{{ row.id }}</td>
+              <td>{{ row.issuer }}</td>
+              <td>{{ row.date_issued }}</td>
+              <td class="text-end">{{ row.price_listed|intcomma }}</td>
+              <td>{{ row.status|title }}</td>
+              <td>{{ row.title|escape }}</td>
+              <td>
+                {% if row.station %}
+                  <i class="fa fa-location-dot text-info" data-bs-toggle="tooltip" title="{{ row.station|escape }}"></i>
+                {% else %}—{% endif %}
+              </td>
+              <td>
+                <span class="{% if row.review_status == 'Approved' %}text-success{% elif row.review_status == 'Rejected' %}text-danger{% endif %}">
+                  {{ row.review_status }}
+                </span>
+              </td>
+              <td class="text-end">{{ row.subsidy_amount|floatformat:2|intcomma }}</td>
+              <td><span class="{% if row.paid %}text-success{% endif %}">{{ row.paid|yesno:"Yes,No" }}</span></td>
+              <td>{{ row.exempt|yesno:"Yes,No" }}</td>
+              <td class="text-start">{{ row.reason|default_if_none:''|escape }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="12" class="text-center text-muted">{% trans "No contracts to display." %}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -14,6 +14,7 @@ urlpatterns = [
     path("contract/summary/claim/", v.SaveClaimView.as_view(), name="save_claim"),
     path("contract/payments/", v.PaymentsView.as_view(), name="payments"),
     path("contract/payments/mark-paid/", v.MarkPaidView.as_view(), name="payments_mark_paid"),
+    path("contract/user/stats/", v.UserStatsView.as_view(), name="user_stats"),
     path("admin/doctrines/", DoctrineRequestsAdminView.as_view(), name="doctrine_admin"),
     path("admin/doctrines/<str:doctrine_name>/", DoctrineRequestsDetailView.as_view(), name="doctrine_detail"),
     path("admin/subsidy-settings/", SubsidySettingsAdminView.as_view(), name="subsidy_settings"),
