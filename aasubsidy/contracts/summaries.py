@@ -345,6 +345,8 @@ def doctrine_stock_summary(
         available = int(stock_counts.get(fit_id, 0))
         requested = int(r["stock_requested"] or 0)
         needed = max(requested - available, 0)
+        if requested == 0:
+            continue
 
         claimed_total = int(claims_by_fit.get(r["pk"], 0))
         claimed_by_me = int(my_claims_by_fit.get(r["pk"], 0))
