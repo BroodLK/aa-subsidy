@@ -114,6 +114,7 @@
         <div class="invalid-feedback d-block" id="claimError" style="display:none;"></div>
       </div>
       <div class="modal-footer">
+        <button type="button" class="btn btn-outline-danger me-auto d-none" id="clearClaimBtn">{% trans "Clear my claim" %}</button>
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">{% trans "Cancel" %}</button>
         <button type="submit" class="btn btn-primary">{% trans "Save" %}</button>
       </div>
@@ -171,6 +172,7 @@
     const fitNameEl = document.getElementById('claimFitName');
     const hintEl = document.getElementById('claimHint');
     const errorEl = document.getElementById('claimError');
+    const clearBtn = document.getElementById('clearClaimBtn');
     let modal;
 
     document.querySelectorAll('.claim-link').forEach(link => {
@@ -182,7 +184,9 @@
         const claimedMe = parseInt(link.getAttribute('data-claimed-me') || '0', 10);
         const claimedTotal = parseInt(link.getAttribute('data-claimed-total') || '0', 10);
         const claimants = (link.getAttribute('data-claimants') || '').trim();
-
+        if (clearBtn) {
+          clearBtn.classList.toggle('d-none', !(claimedMe > 0));
+        }
         fitIdEl.value = fitId;
         qtyEl.value = claimedMe > 0 ? claimedMe : '';
         qtyEl.min = 1;
@@ -200,6 +204,7 @@
 
     document.addEventListener('click', async (e) => {
       const copyEl = e.target.closest('.copyable');
+      const claimedMe = parseInt(link.getAttribute('data-claimed-me') || '0', 10);
       if (copyEl) {
         const txt = copyEl.getAttribute('data-copy') || copyEl.textContent || '';
         try {
@@ -219,6 +224,43 @@
         }
       }
     });
+    if (clearBtn) {
+      clearBtn.addEventListener('click', async () => {
+        const fitId = parseInt(fitIdEl.value || '0', 10);
+        if (!(fitId > 0)) return;
+        try {
+          showLoading();
+          const resp = await fetch("{% url 'aasubsidy:delete_claim' %}", {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify({ fit_id: fitId }),
+            credentials: 'same-origin',
+          });
+          const data = await resp.json();
+          if (!resp.ok || !data.ok) throw new Error(data.error || 'Failed to clear claim');
+          window.location.reload();
+        } catch (err) {
+          errorEl.textContent = err.message || 'Error clearing claim.';
+          errorEl.style.display = 'block';
+          hideLoading();
+        }
+      });
+    }
+    if (modalEl) {
+      modalEl.addEventListener('hide.bs.modal', () => {
+        const overlay = document.getElementById('loadingOverlay');
+        if (overlay) overlay.style.display = 'none';
+      });
+      modalEl.addEventListener('hidden.bs.modal', () => {
+        const backdrops = document.querySelectorAll('.modal-backdrop.show');
+        backdrops.forEach(b => b.parentNode && b.parentNode.removeChild(b));
+        document.body.classList.remove('modal-open');
+        document.body.style.removeProperty('padding-right');
+      });
+    }
 
     document.getElementById('claimForm').addEventListener('submit', async (e) => {
       e.preventDefault();

@@ -48,6 +48,32 @@ def get_main_for_character(character: EveCharacter):
     ):
         return None
 
+@method_decorator(csrf_exempt, name="dispatch")
+class DeleteClaimView(PermissionRequiredMixin, View):
+    permission_required = "aasubsidy.basic_access"
+
+    def post(self, request):
+        try:
+            import json
+            data = json.loads(request.body.decode("utf-8") or "{}")
+        except Exception:
+            return JsonResponse({"ok": False, "error": "invalid_json"}, status=400)
+
+        try:
+            fit_id = int(data.get("fit_id") or 0)
+        except Exception:
+            return JsonResponse({"ok": False, "error": "invalid_params"}, status=400)
+
+        if fit_id <= 0:
+            return JsonResponse({"ok": False, "error": "invalid_params"}, status=400)
+
+        deleted, _ = FittingClaim.objects.filter(fitting_id=fit_id, user=request.user).delete()
+
+        if deleted:
+            messages.success(request, "Your claim was cleared.")
+            return JsonResponse({"ok": True, "fit_id": fit_id, "deleted": True})
+        else:
+            return JsonResponse({"ok": True, "fit_id": fit_id, "deleted": False})
 
 class MainView(PermissionRequiredMixin, TemplateView):
     template_name = "contracts/summary.html"
