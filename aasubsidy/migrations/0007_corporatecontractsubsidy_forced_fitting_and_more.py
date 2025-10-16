@@ -7,7 +7,6 @@ import django.db.models.deletion
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('fittings', '0018_itempricesfittings_delete_itemprices'),
         ('aasubsidy', '0006_corporatecontractsubsidy_exempt_and_more'),
     ]
 
