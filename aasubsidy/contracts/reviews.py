@@ -67,7 +67,9 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
     DEC_2 = DecimalField(max_digits=30, decimal_places=2)
     DEC_4 = DecimalField(max_digits=30, decimal_places=4)
     price_field = "sell" if cfg["basis"] == "sell" else "buy"
-    incr_val = cfg["incr"]
+    incr_val = cfg["incr"] or INCR
+
+    safe_incr_val = Decimal(str(incr_val)) if Decimal(str(incr_val or 0)) != 0 else Decimal(str(INCR))
 
     base_subsidies = (
         CorporateContractSubsidy.objects
@@ -158,14 +160,14 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
     round_items = ExpressionWrapper(
         Ceil(ExpressionWrapper(
             Coalesce(Subquery(items_basis_fit, output_field=DEC_2), Value(Decimal("0"), output_field=DEC_2))
-            / Value(incr_val, output_field=DEC_2), output_field=DEC_2
-        ), output_field=DEC_0) * Value(incr_val, output_field=DEC_2), output_field=DEC_2
+            / Value(safe_incr_val, output_field=DEC_2), output_field=DEC_2
+        ), output_field=DEC_0) * Value(safe_incr_val, output_field=DEC_2), output_field=DEC_2
     )
     round_ship = ExpressionWrapper(
         Ceil(ExpressionWrapper(
-            Coalesce(ship_basis_fit, Value(Decimal("0"), output_field=DEC_2)) / Value(incr_val, output_field=DEC_2),
+            Coalesce(ship_basis_fit, Value(Decimal("0"), output_field=DEC_2)) / Value(safe_incr_val, output_field=DEC_2),
             output_field=DEC_2
-        ), output_field=DEC_0) * Value(incr_val, output_field=DEC_2), output_field=DEC_2
+        ), output_field=DEC_0) * Value(safe_incr_val, output_field=DEC_2), output_field=DEC_2
     )
     fit_basis_total = ExpressionWrapper(round_items + round_ship, output_field=DEC_2)
     fit_total_vol = ExpressionWrapper(
@@ -179,9 +181,9 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
                 (F("basis_total") * Value(cfg["pct"], output_field=DEC_2))
                 + (F("total_vol") * Value(cfg["m3"], output_field=DEC_2)),
                 output_field=DEC_2
-            ), Value(2), output_field=DEC_2) / Value(incr_val, output_field=DEC_2),
+            ), Value(2), output_field=DEC_2) / Value(safe_incr_val, output_field=DEC_2),
             output_field=DEC_2
-        ), output_field=DEC_0) * Value(incr_val, output_field=DEC_2),
+        ), output_field=DEC_0) * Value(safe_incr_val, output_field=DEC_2),
         output_field=DEC_2,
     )
 
@@ -310,13 +312,13 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
                 )
                 .annotate(
                     items_sell_isk=ExpressionWrapper(
-                        Ceil(ExpressionWrapper(F("items_sell_isk_raw") / Value(incr_val, output_field=DEC_2), output_field=DEC_2), output_field=DEC_0)
-                        * Value(incr_val, output_field=DEC_2),
+                        Ceil(ExpressionWrapper(F("items_sell_isk_raw") / Value(safe_incr_val, output_field=DEC_2), output_field=DEC_2), output_field=DEC_0)
+                        * Value(safe_incr_val, output_field=DEC_2),
                         output_field=DEC_2,
                     ),
                     ship_sell_isk=ExpressionWrapper(
-                        Ceil(ExpressionWrapper(F("ship_sell_isk_raw") / Value(incr_val, output_field=DEC_2), output_field=DEC_2), output_field=DEC_0)
-                        * Value(incr_val, output_field=DEC_2),
+                        Ceil(ExpressionWrapper(F("ship_sell_isk_raw") / Value(safe_incr_val, output_field=DEC_2), output_field=DEC_2), output_field=DEC_0)
+                        * Value(safe_incr_val, output_field=DEC_2),
                         output_field=DEC_2,
                     ),
                 )
@@ -337,12 +339,12 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
                                     Value(2),
                                     output_field=DEC_2,
                                 )
-                                / Value(incr_val, output_field=DEC_2),
+                                / Value(safe_incr_val, output_field=DEC_2),
                                 output_field=DEC_2,
                             ),
                             output_field=DEC_0,
                         )
-                        * Value(incr_val, output_field=DEC_2),
+                        * Value(safe_incr_val, output_field=DEC_2),
                         output_field=DEC_2,
                     )
                 )
@@ -352,7 +354,7 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
             if qfit_row:
                 jita_sell_isk = float(qfit_row[0]["jita_sell_isk"] or 0.0)
                 suggested = float(qfit_row[0]["subsidy_isk"] or 0.0)
-                pct_jita = round((jita_sell_isk / int(contract_price)) * 100, 2)
+                pct_jita = round(((jita_sell_isk / contract_price) * 100), 2) if contract_price else 0.0
             else:
                 suggested = 0.0
                 pct_jita = 0.0
