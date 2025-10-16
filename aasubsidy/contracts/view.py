@@ -1,9 +1,8 @@
-# file: aasubsidy/contracts/view.py
 from __future__ import annotations
 
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
-from typing import List, Optional
+from typing import List
 
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, PermissionRequiredMixin
@@ -84,10 +83,8 @@ class MainView(PermissionRequiredMixin, TemplateView):
         end = timezone.now()
         start = end - timedelta(days=3000)
 
-        # pass request user to the summary function if supported
         try:
             from ..contracts import summaries as summaries_mod
-
             summaries_mod.doctrine_stock_summary.request_user_id = (
                 self.request.user.id if self.request.user.is_authenticated else None
             )
@@ -197,7 +194,6 @@ class SaveClaimView(PermissionRequiredMixin, View):
     def post(self, request):
         try:
             import json
-
             data = json.loads(request.body.decode("utf-8") or "{}")
         except Exception:
             return JsonResponse({"ok": False, "error": "invalid_json"}, status=400)
@@ -244,7 +240,7 @@ class ReviewerView(PermissionRequiredMixin, TemplateView):
         end = timezone.now()
         start = end - timedelta(days=30)
         ctx["contracts"] = reviewer_table(start, end, corporation_id=1)
-
+        ctx["all_fits"] = Fitting.objects.only("id", "name").order_by("name")
         if self.request.user.is_authenticated:
             pref = UserTablePreference.objects.filter(
                 user=self.request.user, table_key="contracts"
@@ -432,3 +428,32 @@ class MarkPaidView(PermissionRequiredMixin, View):
             )
 
         return JsonResponse({"ok": True, "updated": count})
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class ForceFitView(PermissionRequiredMixin, View):
+    permission_required = "aasubsidy.review_subsidy"
+
+    @transaction.atomic
+    def post(self, request, contract_id: int):
+        fit_id_raw = request.POST.get("fit_id", "").strip()
+        try:
+            cc = CorporateContract.objects.select_for_update().only("id", "contract_id").get(
+                contract_id=contract_id, corporation_id=1
+            )
+        except CorporateContract.DoesNotExist:
+            return JsonResponse({"ok": False, "error": "not_found"}, status=404)
+
+        meta, _ = CorporateContractSubsidy.objects.select_for_update().get_or_create(contract_id=cc.pk)
+
+        if not fit_id_raw:
+            meta.forced_fitting = None
+        else:
+            try:
+                fit_id = int(fit_id_raw)
+                meta.forced_fitting = get_object_or_404(Fitting, pk=fit_id)
+            except Exception:
+                return JsonResponse({"ok": False, "error": "invalid_fit"}, status=400)
+
+        meta.save(update_fields=["forced_fitting"])
+        return JsonResponse({"ok": True})

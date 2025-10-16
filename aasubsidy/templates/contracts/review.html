@@ -13,6 +13,9 @@
   <div class="card mb-4">
     <div class="card-header d-flex justify-content-between align-items-center">
       <h3 class="m-0" id="contractsHeader">{% trans "Contracts Dashboard" %}</h3>
+      <div class="d-flex align-items-center gap-2">
+        <select id="globalFitSelector" class="form-select form-select-sm d-none"></select>
+      </div>
     </div>
 
     <div class="card-body p-2">
@@ -97,7 +100,20 @@
                   <i class="fa fa-location-dot text-info" data-bs-toggle="tooltip" title="{{ row.station|escape }}"></i>
                 {% else %}—{% endif %}
               </td>
-              <td data-val="{{ row.doctrine|striptags }}">{{ row.doctrine|safe }}</td>
+              <td data-val="{{ row.doctrine|striptags }}">
+                  <div class="d-flex flex-column gap-1">
+                    <div class="doctrine-display">{{ row.doctrine|safe|default:"—" }}</div>
+                    <div class="d-flex align-items-center gap-1 force-fit-container d-none">
+                      <select class="form-select form-select-sm force-fit-select" data-contract="{{ row.id }}">
+                        <option value="__clear__">{% trans "Chose a doctrine" %}</option>
+                        <option value="__clear__">{% trans "Clear choice" %}</option>
+                        {% for f in all_fits %}
+                          <option value="{{ f.id }}">{{ f.name }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                  </div>
+              </td>
               <td data-val="{{ row.review_status }}">
                 <span class="{% if row.review_status == 'Approved' %}text-success{% elif row.review_status == 'Rejected' %}text-danger{% endif %}">{{ row.review_status }}</span>
               </td>
@@ -146,7 +162,6 @@
         </table>
       </div>
 
-      <!-- Bulk actions toolbar -->
       <div class="d-flex justify-content-between align-items-center mt-3">
         <div class="small text-muted">
           <span id="bulkSelectedCount">0</span> {% trans "selected" %}
@@ -194,7 +209,6 @@
   </div>
 </div>
 
-<!-- Toast container -->
 <div class="position-fixed top-0 end-0 p-3" style="z-index: 1080">
   <div id="copyToast" class="toast align-items-center text-bg-success border-0" role="alert" aria-live="assertive" aria-atomic="true">
     <div class="d-flex">
@@ -218,8 +232,6 @@
     const overlay = document.getElementById('loadingOverlay');
     const showLoading = () => { if (overlay) overlay.style.display = 'block'; };
     const hideLoading = () => { if (overlay) overlay.style.display = 'none'; };
-
-    // Show while page initializes
     showLoading();
 
     document.querySelectorAll('#contractsTable tbody tr').forEach(tr => {
@@ -351,6 +363,18 @@
 
     applyFilters();
 
+    document.addEventListener('click', (e) => {
+      const td = e.target.closest('td[data-val]');
+      const isDoctrineCell = td && Array.from(td.parentElement.parentElement.tHead?.rows?.[0]?.cells || document.querySelectorAll('#contractsTable thead tr:first-child th'))
+        .some((th, idx) => th.getAttribute('data-col') === 'doctrine' && td.cellIndex === idx);
+
+      if (isDoctrineCell) {
+        const container = td.querySelector('.force-fit-container');
+        if (container) container.classList.remove('d-none');
+      } else {
+        document.querySelectorAll('.force-fit-container').forEach(c => c.classList.add('d-none'));
+      }
+    });
     document.addEventListener('click', async (e) => {
       const copyEl = e.target.closest('.copyable');
       if (copyEl) {
@@ -371,7 +395,30 @@
           } catch (_) {}
         }
       }
-
+    });
+    document.querySelectorAll('.force-fit-select').forEach(sel => {
+          sel.addEventListener('change', async () => {
+            const contractId = sel.getAttribute('data-contract');
+            const fitId = sel.value;
+            const token = (document.querySelector('[name=csrfmiddlewaretoken]')||{}).value || '';
+            const url = "{% url 'aasubsidy:force_fit' 0 %}".replace("/0/", `/${contractId}/`);
+            showLoading();
+            try {
+              await fetch(url, {
+                method: "POST",
+                headers: {
+                  "X-Requested-With": "XMLHttpRequest",
+                  "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                  "X-CSRFToken": token
+                },
+                body: new URLSearchParams({ fit_id: fitId }).toString()
+              });
+            } finally {
+              location.reload();
+            }
+          });
+    });
+    document.addEventListener('click', async (e) => {
       const actBtn = e.target.closest("button[data-action]");
       if (actBtn) {
         const id = actBtn.getAttribute('data-id');

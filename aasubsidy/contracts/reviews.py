@@ -68,7 +68,6 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
     DEC_4 = DecimalField(max_digits=30, decimal_places=4)
     price_field = "sell" if cfg["basis"] == "sell" else "buy"
     incr_val = cfg["incr"] or INCR
-
     safe_incr_val = Decimal(str(incr_val)) if Decimal(str(incr_val or 0)) != 0 else Decimal(str(INCR))
 
     base_subsidies = (
@@ -77,6 +76,7 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
             "contract__issuer_name",
             "contract__start_location_name",
             "contract",
+            "forced_fitting"
         )
         .filter(
             contract__date_issued__gte=start,
@@ -86,9 +86,10 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
     if corporation_id is not None:
         base_subsidies = base_subsidies.filter(contract__corporation_id=corporation_id)
 
-    # We still need to perform per-contract calculations; reference contracts by the subsidies' FK
-    base_contracts = CorporateContract.objects.filter(pk__in=base_subsidies.values("contract_id"),
-                                                      corporation_id=corporation_id if corporation_id is not None else F("corporation_id"))
+    base_contracts = CorporateContract.objects.filter(
+        pk__in=base_subsidies.values("contract_id"),
+        corporation_id=corporation_id if corporation_id is not None else F("corporation_id"),
+    )
 
     ci_qty = (
         CorporateContractItem.objects
@@ -189,10 +190,10 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
 
     per_contract_fit_calc = (
         Fitting.objects
-        .filter(pk__in=Subquery(matching_fit_ids))               # fits that match THIS contract
+        .filter(pk__in=Subquery(matching_fit_ids))
         .annotate(basis_total=fit_basis_total, total_vol=fit_total_vol)
         .annotate(suggested=fit_suggested)
-        .values("basis_total", "suggested")
+        .values("pk", "basis_total", "suggested", "name")
         .order_by("basis_total")
     )
 
@@ -209,6 +210,7 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
             "issuer_name__name", "start_location_name__location_name",
             "aasubsidy_meta__review_status", "aasubsidy_meta__subsidy_amount",
             "aasubsidy_meta__reason", "aasubsidy_meta__paid",
+            "aasubsidy_meta__forced_fitting_id",
             "min_basis", "suggested_subsidy",
         )
         .distinct()
@@ -220,30 +222,37 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
         contract_price = float(c["price"] or 0.0)
         pct_jita = round((contract_price / basis_val) * 100, 2) if basis_val else 0.0
         review_status = {1: "Approved", -1: "Rejected"}.get(c["aasubsidy_meta__review_status"], "Pending")
-        doctrine_names = _matched_fit_names_for_contract(c["pk"])
-        matched_fit = None
-        if doctrine_names:
-            matched_fit = (
-                Fitting.objects
-                .annotate(fit_id=F("pk"))
-                .annotate(has_missing=Exists(
-                    FittingItem.objects
-                    .filter(fit_id=OuterRef("fit_id"))
-                    .annotate(have_qty=Coalesce(Subquery(
-                        CorporateContractItem.objects
-                        .filter(contract_id=c["pk"], type_name_id=OuterRef("type_id"))
-                        .values("type_name_id").annotate(q=Sum("quantity")).values("q")
-                    ), Value(0)))
-                    .filter(have_qty__lt=F("quantity"))
-                ))
-                .filter(has_missing=False)
-                .order_by("pk")
-                .values_list("pk", flat=True)[:1]
-            )
-            matched_fit = list(matched_fit)
-            matched_fit_id = matched_fit[0] if matched_fit else None
+
+        forced_id = c.get("aasubsidy_meta__forced_fitting_id") or None
+        if forced_id:
+            fit_name = Fitting.objects.filter(pk=forced_id).values_list("name", flat=True).first() or "Forced Doctrine"
+            doctrine_html = fit_name + " (forced)"
+            matched_fit_id = forced_id
         else:
-            matched_fit_id = None
+            names = _matched_fit_names_for_contract(c["pk"])
+            doctrine_html = "<br>".join(names) if names else ""
+            if names:
+                matched_fit = (
+                    Fitting.objects
+                    .annotate(fit_id=F("pk"))
+                    .annotate(has_missing=Exists(
+                        FittingItem.objects
+                        .filter(fit_id=OuterRef("fit_id"))
+                        .annotate(have_qty=Coalesce(Subquery(
+                            CorporateContractItem.objects
+                            .filter(contract_id=c["pk"], type_name_id=OuterRef("type_id"))
+                            .values("type_name_id").annotate(q=Sum("quantity")).values("q")
+                        ), Value(0)))
+                        .filter(have_qty__lt=F("quantity"))
+                    ))
+                    .filter(has_missing=False)
+                    .order_by("pk")
+                    .values_list("pk", flat=True)[:1]
+                )
+                matched_fit = list(matched_fit)
+                matched_fit_id = matched_fit[0] if matched_fit else None
+            else:
+                matched_fit_id = None
 
         jita_sell_isk = 0.0
         total_vol = 0.0
@@ -372,7 +381,7 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
             "status": c["status"],
             "title": c["title"] or "",
             "station": station_val,
-            "doctrine": "<br>".join(doctrine_names),
+            "doctrine": doctrine_html,
             "review_status": review_status,
             "subsidy_amount": prefill_subsidy,
             "reason": c["aasubsidy_meta__reason"] or "",

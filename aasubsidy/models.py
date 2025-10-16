@@ -49,6 +49,7 @@ class CorporateContractSubsidy(models.Model):
     reason = models.TextField(blank=True, default="")
     paid = models.BooleanField(default=False)
     exempt = models.BooleanField(default=False)
+    forced_fitting = models.ForeignKey("fittings.Fitting", null=True, blank=True, on_delete=models.SET_NULL, related_name="forced_contracts", db_index=True)
 
     class Meta:
         verbose_name = "Corporate Contract Subsidy"

@@ -1,4 +1,3 @@
-# file: aasubsidy/contracts/summaries.py
 from __future__ import annotations
 
 from collections import Counter, defaultdict
@@ -21,7 +20,7 @@ from django.db.models.functions import Coalesce
 from eveuniverse.models import EveType
 from fittings.models import Fitting, FittingItem
 from ..helpers.db import Ceil, Round
-from ..models import FittingClaim, FittingRequest, SubsidyConfig, SubsidyItemPrice
+from ..models import FittingClaim, FittingRequest, SubsidyConfig, SubsidyItemPrice, CorporateContractSubsidy
 from corptools.models import CorporateContract, CorporateContractItem
 
 INCR = 250_000
@@ -73,7 +72,14 @@ def doctrine_stock_summary(
         .only("id")
     )
 
-    contract_item_counts: Dict[str, Counter] = {}
+    forced_map = dict(
+        CorporateContractSubsidy.objects
+        .filter(contract__in=contract_qs, forced_fitting__isnull=False)
+        .values_list("contract_id", "forced_fitting_id")
+    )
+
+    forced_contract_ids = set(forced_map.keys())
+    contract_item_counts: Dict[int, Counter] = {}
     items_qs = (
         CorporateContractItem.objects.filter(contract__in=contract_qs, is_included=True)
         .values_list("contract_id", "type_name_id")
@@ -81,7 +87,9 @@ def doctrine_stock_summary(
         .order_by("contract_id")
     )
     for contract_id, type_name_id, total in items_qs:
-        ctr = contract_item_counts.setdefault(contract_id, Counter())
+        if int(contract_id) in forced_contract_ids:
+            continue
+        ctr = contract_item_counts.setdefault(int(contract_id), Counter())
         ctr[int(type_name_id)] += int(total or 0)
     if not contract_item_counts:
         return []
@@ -128,8 +136,13 @@ def doctrine_stock_summary(
         return sets or 0
 
     stock_counts: Dict[int, int] = defaultdict(int)
-    for ctr in contract_item_counts.values():
+
+    for cid, fit_id in forced_map.items():
+        stock_counts[int(fit_id)] += 1
+
+    for cid, ctr in contract_item_counts.items():
         hull_candidates: List[int] = []
+
         for type_id in ctr.keys():
             if type_id in fits_by_hull:
                 hull_candidates.append(int(type_id))
