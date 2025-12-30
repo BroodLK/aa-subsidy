@@ -10,6 +10,18 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.CreateModel(
+            name='DoctrineSystem',
+            fields=[
+                ('id', models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('name', models.CharField(max_length=100, unique=True)),
+                ('description', models.TextField(blank=True, default='')),
+            ],
+            options={
+                'verbose_name': 'Doctrine System',
+                'verbose_name_plural': 'Doctrine Systems',
+            },
+        ),
         migrations.AddField(
             model_name='doctrinesystem',
             name='is_active',
