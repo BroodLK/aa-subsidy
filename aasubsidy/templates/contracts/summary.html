@@ -9,9 +9,18 @@
         <div class="mt-2 text-light small">{% trans "Loading…" %}</div>
       </div>
     </div>
-    <div id="stockSection" class="card mb-4">
+    {% for system in systems %}
+    <div id="stockSection_{{ forloop.index }}" class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
-            <h3 class="m-0" id="stockHeader">{% trans "Doctrine Stock Summary" %}</h3>
+            <h3 class="m-0" id="stockHeader_{{ forloop.index }}">{{ system.system_name }}</h3>
+            <div class="d-flex align-items-center gap-3">
+                {% if not system.has_locations %}
+                <span class="badge bg-warning text-dark"><i class="fas fa-exclamation-triangle me-1"></i>{% trans "No locations defined" %}</span>
+                {% endif %}
+                {% if system.system_description %}
+                <span class="text-muted small">{{ system.system_description }}</span>
+                {% endif %}
+            </div>
         </div>
         <div class="card-body p-2">
             <div class="table-responsive">
@@ -29,9 +38,9 @@
                     </tr>
                     </thead>
                     <tbody>
-                    {% for r in rows %}
+                    {% for r in system.rows %}
                     <tr>
-                        <td><a href="/fittings/fit/{{ r.fit_id }}/" target="_blank">{{ r.doctrine }}</a></td>
+                        <td><a href="/fittings/fit/{{ r.fit_id }}/" target="_blank">{{ r.fitting_name }}</a></td>
                         <td class="text-end">{{ r.stock_requested|intcomma }}</td>
                         <td class="text-end
                             {% if r.stock_available > r.stock_requested %} text-success
@@ -79,16 +88,16 @@
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="8" class="text-center text-muted">{% trans "No doctrines to display." %}</td>
+                        <td colspan="8" class="text-center text-muted">{% trans "No doctrines to display for this system." %}</td>
                     </tr>
                     {% endfor %}
                     </tbody>
                     <tfoot>
                       <tr class="table-dark">
                         <th class="text-end">{% trans "Totals" %}</th>
-                        <th class="text-end">{{ totals.requested|intcomma }}</th>
-                        <th class="text-end">{{ totals.available|intcomma }}</th>
-                        <th class="text-end">{{ totals.needed|intcomma }}</th>
+                        <th class="text-end">{{ system.totals.requested|intcomma }}</th>
+                        <th class="text-end">{{ system.totals.available|intcomma }}</th>
+                        <th class="text-end">{{ system.totals.needed|intcomma }}</th>
                         <th colspan="4"></th>
                       </tr>
                     </tfoot>
@@ -96,6 +105,13 @@
             </div>
         </div>
     </div>
+    {% empty %}
+    <div class="card mb-4">
+        <div class="card-body text-center text-muted">
+            {% trans "No doctrine systems defined or active." %}
+        </div>
+    </div>
+    {% endfor %}
 </div>
 
 <div class="modal fade" id="claimModal" tabindex="-1" aria-labelledby="claimModalLabel" aria-hidden="true">

@@ -21,6 +21,15 @@
             </a>
         </li>
 
+        {% if perms.aasubsidy.basic_access %}
+        <li class="nav-item">
+            <a class="nav-link {% if request.resolver_match.url_name == 'insights' %}active{% endif %}"
+               href="{% url 'aasubsidy:insights' %}">
+                {% translate "Insights" %}
+            </a>
+        </li>
+        {% endif %}
+
         {% if perms.aasubsidy.review_subsidy %}
         <li class="nav-item">
             <a class="nav-link {% if request.resolver_match.url_name == 'review' %}active{% endif %}"

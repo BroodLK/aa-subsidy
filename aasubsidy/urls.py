@@ -1,12 +1,13 @@
 from django.urls import path
 from .contracts import view as v
-from .contracts.doctrines import DoctrineRequestsAdminView, DoctrineRequestsDetailView
+from .contracts.doctrines import DoctrineRequestsAdminView, DoctrineRequestsDetailView, location_search
 from .contracts.admin.settings import SubsidySettingsAdminView
 
 app_name = "aasubsidy"
 
 urlpatterns = [
     path("", v.MainView.as_view(), name="index"),
+    path("insights/", v.DoctrineInsightsView.as_view(), name="insights"),
     path("contract/review/", v.ReviewerView.as_view(), name="review"),
     path("contract/<int:contract_id>/approve/", v.ApproveView.as_view(), name="approve"),
     path("contract/<int:contract_id>/deny/", v.DenyView.as_view(), name="deny"),
@@ -17,7 +18,9 @@ urlpatterns = [
     path("contract/payments/mark-paid/", v.MarkPaidView.as_view(), name="payments_mark_paid"),
     path("contract/user/stats/", v.UserStatsView.as_view(), name="user_stats"),
     path("contract/<int:contract_id>/force-fit/", v.ForceFitView.as_view(), name="force_fit"),
+    path("contract/<int:contract_id>/items/", v.ContractItemsView.as_view(), name="contract_items"),
     path("admin/doctrines/", DoctrineRequestsAdminView.as_view(), name="doctrine_admin"),
     path("admin/doctrines/<str:doctrine_name>/", DoctrineRequestsDetailView.as_view(), name="doctrine_detail"),
     path("admin/subsidy-settings/", SubsidySettingsAdminView.as_view(), name="subsidy_settings"),
+    path("api/location-search/", location_search, name="location_search"),
 ]

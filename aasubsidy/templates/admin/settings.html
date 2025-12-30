@@ -38,6 +38,11 @@
             <label class="form-label">{% trans "Rounding increment (ISK)" %}</label>
             <input type="number" step="1" min="1" name="rounding_increment" class="form-control themable-input" value="{{ cfg.rounding_increment }}">
           </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label">{% trans "Corporation ID" %}</label>
+            <input type="number" step="1" min="1" name="corporation_id" class="form-control themable-input" value="{{ cfg.corporation_id }}">
+            <div class="form-text">{% trans "The ID of the corporation whose contracts should be subsidized." %}</div>
+          </div>
         </div>
         <div class="mt-3">
           <button class="btn btn-primary" type="submit">{% trans "Save" %}</button>

@@ -20,12 +20,14 @@ class SubsidySettingsAdminView(PermissionRequiredMixin, View):
         pct_raw = request.POST.get("pct_over_basis") or "0.10"
         m3_raw = request.POST.get("cost_per_m3") or "250"
         incr_raw = request.POST.get("rounding_increment") or "250000"
+        corp_id_raw = request.POST.get("corporation_id") or "1"
         try:
             cfg.price_basis = "buy" if basis == "buy" else "sell"
             cfg.pct_over_basis = Decimal(pct_raw)
             cfg.cost_per_m3 = Decimal(m3_raw)
             cfg.rounding_increment = int(incr_raw)
-            cfg.save(update_fields=["price_basis", "pct_over_basis", "cost_per_m3", "rounding_increment"])
+            cfg.corporation_id = int(corp_id_raw)
+            cfg.save(update_fields=["price_basis", "pct_over_basis", "cost_per_m3", "rounding_increment", "corporation_id"])
             messages.success(request, "Subsidy settings saved.")
         except (InvalidOperation, ValueError):
             messages.error(request, "Invalid values provided. Please review and try again.")

@@ -43,9 +43,12 @@ def sync_fitting_requests(self, default_requested: int = 0, chunk_size: int = 10
 @shared_task(bind=True)
 def import_corporate_contract_reviews(
     self,
-    corporation_id: int = 1,
+    corporation_id: int | None = None,
     chunk_size: int = 1000,
 ) -> dict:
+    from .models import SubsidyConfig
+    if corporation_id is None:
+        corporation_id = SubsidyConfig.active().corporation_id
 
     qs = CorporateContract.objects.filter(corporation_id=corporation_id).only("id")
 

@@ -11,6 +11,7 @@ from django.db.models import (
     F,
     OuterRef,
     Prefetch,
+    Q,
     Subquery,
     Sum,
     Value,
@@ -20,8 +21,16 @@ from django.db.models.functions import Coalesce
 from eveuniverse.models import EveType
 from fittings.models import Fitting, FittingItem
 from ..helpers.db import Ceil, Round
-from ..models import FittingClaim, FittingRequest, SubsidyConfig, SubsidyItemPrice, CorporateContractSubsidy
+from ..models import (
+    FittingClaim,
+    FittingRequest,
+    SubsidyConfig,
+    SubsidyItemPrice,
+    CorporateContractSubsidy,
+    DoctrineSystem,
+)
 from corptools.models import CorporateContract, CorporateContractItem
+from allianceauth.eveonline.models import EveCharacter
 
 INCR = 250_000
 
@@ -33,6 +42,7 @@ def _cfg() -> dict:
         "pct": cfg.pct_over_basis,
         "m3": cfg.cost_per_m3,
         "incr": cfg.rounding_increment or INCR,
+        "corporation_id": cfg.corporation_id,
     }
 
 
@@ -46,10 +56,12 @@ def _ceil_to_increment(x: Decimal, inc: Decimal) -> Decimal:
 def doctrine_stock_summary(
     start,
     end,
-    corporation_id: int = 1,
+    corporation_id: int | None = None,
     statuses: Tuple[str, ...] | None = ("outstanding",),
 ):
     cfg = _cfg()
+    if corporation_id is None:
+        corporation_id = cfg["corporation_id"]
     incr_val = Decimal(cfg["incr"])
     price_field = "sell" if cfg["basis"] == "sell" else "buy"
 
@@ -61,106 +73,122 @@ def doctrine_stock_summary(
     if statuses:
         contract_filters["status__in"] = list(statuses)
 
+    if statuses:
+        status_q = Q()
+        for s in statuses:
+            status_q |= Q(status__iexact=s)
+    else:
+        status_q = Q(status__iexact="outstanding")
+
     contract_qs = (
         CorporateContract.objects.filter(
+            status_q,
             corporation_id=corporation_id,
-            status="outstanding",
             date_expired__gt=timezone.now(),
             date_issued__gte=start,
             date_issued__lte=end,
         )
-        .only("id")
+        .select_related("start_location_name__system")
     )
+
+    # Use values to avoid object overhead and ensure we get the IDs correctly
+    contract_data = list(
+        contract_qs.values(
+            "id",
+            "start_location_id",
+            "start_location_name_id",
+            "start_location_name__system_id",
+        )
+    )
+
+    # Bulk resolve missing systems if possible
+    missing_system_loc_ids = {
+        c["start_location_id"]
+        for c in contract_data
+        if not c["start_location_name__system_id"]
+    }
+    resolved_systems = {}
+    if missing_system_loc_ids:
+        from corptools.models import EveLocation
+
+        resolved_systems = dict(
+            EveLocation.objects.filter(
+                location_id__in=missing_system_loc_ids, system__isnull=False
+            ).values_list("location_id", "system_id")
+        )
+
+    contract_locations = {}
+    for c in contract_data:
+        cid = c["id"]
+        locs = {c["start_location_id"]}
+
+        # Add the system ID from FK if present
+        if c["start_location_name__system_id"]:
+            locs.add(c["start_location_name__system_id"])
+        # Or from bulk resolved map
+        elif c["start_location_id"] in resolved_systems:
+            locs.add(resolved_systems[c["start_location_id"]])
+
+        contract_locations[cid] = locs
 
     forced_map = dict(
-        CorporateContractSubsidy.objects
-        .filter(contract__in=contract_qs, forced_fitting__isnull=False)
-        .values_list("contract_id", "forced_fitting_id")
+        CorporateContractSubsidy.objects.filter(
+            contract__in=contract_qs, forced_fitting__isnull=False
+        ).values_list("contract_id", "forced_fitting_id")
     )
-
     forced_contract_ids = set(forced_map.keys())
-    contract_item_counts: Dict[int, Counter] = {}
-    items_qs = (
-        CorporateContractItem.objects.filter(contract__in=contract_qs, is_included=True)
-        .values_list("contract_id", "type_name_id")
-        .annotate(total=Sum("quantity"))
-        .order_by("contract_id")
-    )
-    for contract_id, type_name_id, total in items_qs:
-        if int(contract_id) in forced_contract_ids:
+
+    # Use the same matching logic as reviews.py for consistency
+    from ..contracts.reviews import _matched_fit_names_for_contract
+    from django.db.models import Exists, OuterRef, Subquery, Value
+    from django.db.models.functions import Coalesce
+
+    # Build auto_match_map using database queries like reviews does
+    auto_match_map: Dict[int, int] = {}  # contract_id (PK) -> fit_id
+
+    contract_pks = list(contract_qs.values_list("pk", flat=True))
+
+    for contract_pk in contract_pks:
+        if contract_pk in forced_contract_ids:
             continue
-        ctr = contract_item_counts.setdefault(int(contract_id), Counter())
-        ctr[int(type_name_id)] += int(total or 0)
-    if not contract_item_counts:
-        return []
 
-    fit_items_qs = FittingItem.objects.all().only("fit_id", "type_id", "quantity")
-    fittings: List[Fitting] = list(
-        Fitting.objects.all()
-        .only("id", "name", "ship_type_type_id")
-        .prefetch_related(Prefetch("items", queryset=fit_items_qs))
-    )
+        # Use the same matching logic as reviews
+        ci_for_contract_type = (
+            CorporateContractItem.objects.filter(
+                contract_id=contract_pk, type_name_id=OuterRef("type_id"), is_included=True
+            )
+            .values("type_name_id")
+            .annotate(q=Sum("quantity"))
+            .values("q")
+        )
+        missing_item = (
+            FittingItem.objects.filter(fit_id=OuterRef("pk"))
+            .annotate(have_qty=Coalesce(Subquery(ci_for_contract_type), Value(0)))
+            .filter(have_qty__lt=F("quantity"))
+        )
 
-    fits_by_hull: Dict[int, List[int]] = defaultdict(list)
-    reqs_by_fit: Dict[int, Dict[int, int]] = {}
-    fit_order_key: Dict[int, tuple] = {}
+        ci_for_hull = (
+            CorporateContractItem.objects.filter(
+                contract_id=contract_pk, type_name_id=OuterRef("ship_type_type_id"), is_included=True
+            )
+            .values("type_name_id")
+            .annotate(q=Sum("quantity"))
+            .values("q")
+        )
+        hull_check = Coalesce(Subquery(ci_for_hull), Value(0))
 
-    for fit in fittings:
-        hull_id = getattr(fit, "ship_type_type_id", None)
-        if not hull_id:
-            continue
-        agg: Dict[int, int] = defaultdict(int)
-        for it in fit.items.all():
-            agg[int(it.type_id)] += int(it.quantity or 0)
-        reqs = dict(agg)
-        reqs_by_fit[fit.id] = reqs
-        strictness = sum(reqs.values())
-        kinds = len(reqs)
-        fit_order_key[fit.id] = (-strictness, -kinds, fit.id)
-        fits_by_hull[int(hull_id)].append(fit.id)
+        # Get the first matching fitting (sorted by pk for determinism)
+        matched_fit = (
+            Fitting.objects
+            .annotate(has_missing=Exists(missing_item), hull_qty=hull_check)
+            .filter(has_missing=False, hull_qty__gte=1)
+            .order_by("pk")
+            .values_list("pk", flat=True)
+            .first()
+        )
 
-    for hull_id, fit_list in fits_by_hull.items():
-        fit_list.sort(key=lambda fid: fit_order_key[fid])
-
-    def full_sets_for_fit(counter: Counter, requirements: Dict[int, int]) -> int:
-        sets = None
-        for t, need in requirements.items():
-            if need <= 0:
-                continue
-            have = int(counter.get(t, 0))
-            s = have // need
-            if sets is None or s < sets:
-                sets = s
-            if sets == 0:
-                return 0
-        return sets or 0
-
-    stock_counts: Dict[int, int] = defaultdict(int)
-
-    for cid, fit_id in forced_map.items():
-        stock_counts[int(fit_id)] += 1
-
-    for cid, ctr in contract_item_counts.items():
-        hull_candidates: List[int] = []
-
-        for type_id in ctr.keys():
-            if type_id in fits_by_hull:
-                hull_candidates.append(int(type_id))
-        if not hull_candidates:
-            continue
-        for hull_id in sorted(set(hull_candidates)):
-            assigned = False
-            for fit_id in fits_by_hull[hull_id]:
-                reqs = reqs_by_fit.get(fit_id) or {}
-                if ctr.get(hull_id, 0) < 1:
-                    continue
-                sets = full_sets_for_fit(ctr, reqs)
-                if sets >= 1:
-                    stock_counts[fit_id] += 1
-                    assigned = True
-                    break
-            if assigned:
-                break
+        if matched_fit:
+            auto_match_map[contract_pk] = matched_fit
 
     DEC_0 = DecimalField(max_digits=30, decimal_places=0)
     DEC_2 = DecimalField(max_digits=30, decimal_places=2)
@@ -211,9 +239,9 @@ def doctrine_stock_summary(
     )
 
     ship_sell = Subquery(
-        SubsidyItemPrice.objects.filter(
-            eve_type_id=OuterRef("ship_type_type_id")
-        ).values(price_field)[:1],
+        SubsidyItemPrice.objects.filter(eve_type_id=OuterRef("ship_type_type_id")).values(
+            price_field
+        )[:1],
         output_field=DEC_2,
     )
     ship_vol = Subquery(
@@ -223,7 +251,7 @@ def doctrine_stock_summary(
         output_field=DEC_4,
     )
 
-    qs = (
+    qs_base = (
         Fitting.objects.all()
         .annotate(
             items_sell_isk_raw=Coalesce(
@@ -234,12 +262,8 @@ def doctrine_stock_summary(
                 Subquery(items_volume, output_field=DEC_4),
                 Value(Decimal("0"), output_field=DEC_4),
             ),
-            ship_sell_isk_raw=Coalesce(
-                ship_sell, Value(Decimal("0"), output_field=DEC_2)
-            ),
-            ship_volume_m3=Coalesce(
-                ship_vol, Value(Decimal("0"), output_field=DEC_4)
-            ),
+            ship_sell_isk_raw=Coalesce(ship_sell, Value(Decimal("0"), output_field=DEC_2)),
+            ship_volume_m3=Coalesce(ship_vol, Value(Decimal("0"), output_field=DEC_4)),
         )
         .annotate(
             items_sell_isk=ExpressionWrapper(
@@ -266,37 +290,31 @@ def doctrine_stock_summary(
             ),
         )
         .annotate(
-            jita_sell_isk=ExpressionWrapper(
-                F("items_sell_isk") + F("ship_sell_isk"), output_field=DEC_2
-            ),
-            total_vol=ExpressionWrapper(
-                F("items_volume_m3") + F("ship_volume_m3"), output_field=DEC_4
-            ),
+            jita_sell_isk=ExpressionWrapper(F("items_sell_isk") + F("ship_sell_isk"), output_field=DEC_2),
+            total_vol=ExpressionWrapper(F("items_volume_m3") + F("ship_volume_m3"), output_field=DEC_4),
         )
-        .annotate(
-            stock_requested=Coalesce(
-                Subquery(
-                    FittingRequest.objects.filter(fitting_id=OuterRef("pk")).values(
-                        "requested"
-                    )[:1]
-                ),
-                Value(0),
-            )
-        )
-        .values("pk", "name", "stock_requested", "total_vol", "jita_sell_isk")
-        .order_by("name")
     )
 
-    rows: List[dict] = []
+    systems = list(
+        DoctrineSystem.objects.filter(is_active=True)
+        .prefetch_related("locations")
+        .order_by("name")
+    )
+    system_locations: Dict[int, set] = {}
+    for system in systems:
+        locs = {loc.location_id for loc in system.locations.all()}
+        if locs:
+            system_locations[system.id] = locs
+
+    results = []
     pct = Decimal(cfg["pct"])
     per_m3 = Decimal(cfg["m3"])
 
-    fit_ids = [r["pk"] for r in qs]
+    fit_ids = list(Fitting.objects.values_list("id", flat=True))
     claims_by_fit: Dict[int, int] = defaultdict(int)
     my_claims_by_fit: Dict[int, int] = defaultdict(int)
     req_user_id = getattr(doctrine_stock_summary, "request_user_id", None)
 
-    from allianceauth.eveonline.models import EveCharacter
     from ..contracts.view import get_main_for_character
 
     claimants_display: Dict[int, str] = {}
@@ -331,12 +349,6 @@ def doctrine_stock_summary(
         piece = f"{name} ({qty})"
         claimants_display[fid] = f"{existing}, {piece}"[2:] if existing else piece
 
-    all_claims = FittingClaim.objects.filter(fitting_id__in=fit_ids).values("fitting_id").annotate(
-        total=Sum("quantity"))
-
-    for c in all_claims:
-        claims_by_fit[c["fitting_id"]] = int(c["total"] or 0)
-
     for c in (
         FittingClaim.objects.filter(fitting_id__in=fit_ids)
         .values("fitting_id")
@@ -353,41 +365,243 @@ def doctrine_stock_summary(
         for mc in my_claims:
             my_claims_by_fit[mc["fitting_id"]] = int(mc["total"] or 0)
 
-    for r in qs:
-        fit_id = int(r["pk"])
-        available = int(stock_counts.get(fit_id, 0))
-        requested = int(r["stock_requested"] or 0)
-        needed = max(requested - available, 0)
-        if requested == 0:
+    # Map each fitting to its doctrine names for display
+    fit_to_doctrines = {}
+    fittings_for_names = Fitting.objects.prefetch_related("doctrines").only("id")
+    for f in fittings_for_names:
+        names = [d.name for d in f.doctrines.all()]
+        fit_to_doctrines[f.id] = ", ".join(names) if names else ""
+
+    for system in systems:
+        allowed_locations = system_locations.get(system.id)
+        system_stock_counts: Dict[int, int] = defaultdict(int)
+
+        for cid, fit_id in forced_map.items():
+            if allowed_locations is not None:
+                c_locs = contract_locations.get(cid, set())
+                if not (c_locs & allowed_locations):
+                    continue
+            else:
+                continue
+            system_stock_counts[int(fit_id)] += 1
+
+        for cid, fit_id in auto_match_map.items():
+            if allowed_locations is not None:
+                c_locs = contract_locations.get(cid, set())
+                if not (c_locs & allowed_locations):
+                    continue
+            else:
+                continue
+
+            system_stock_counts[fit_id] += 1
+
+        fittings_with_stock = [
+            fid for fid, count in system_stock_counts.items() if count > 0
+        ]
+
+        system_qs = (
+            qs_base.annotate(
+                stock_requested=Coalesce(
+                    Subquery(
+                        FittingRequest.objects.filter(
+                            fitting_id=OuterRef("pk"), system=system
+                        ).values("requested")[:1]
+                    ),
+                    Value(0),
+                )
+            )
+            .filter(Q(stock_requested__gt=0) | Q(pk__in=fittings_with_stock))
+            .values("pk", "name", "stock_requested", "total_vol", "jita_sell_isk")
+            .order_by("name")
+        )
+
+        system_rows = []
+        for r in system_qs:
+            fit_id = int(r["pk"])
+            available = int(system_stock_counts.get(fit_id, 0))
+            requested = int(r["stock_requested"] or 0)
+            needed = max(requested - available, 0)
+
+            claimed_total = int(claims_by_fit.get(fit_id, 0))
+            claimed_by_me = int(my_claims_by_fit.get(fit_id, 0))
+            adjusted_needed = max(needed - claimed_total, 0)
+
+            jita_sell = Decimal(r["jita_sell_isk"] or 0)
+            total_vol = Decimal(r["total_vol"] or 0)
+            base = (jita_sell * pct) + (total_vol * per_m3)
+            base = base.quantize(Decimal("0.01"))
+            subsidy_isk = _ceil_to_increment(base, incr_val)
+            alliance_purchase_isk = _ceil_to_increment(jita_sell + base, incr_val)
+
+            display_name = fit_to_doctrines.get(fit_id)
+            if not display_name:
+                display_name = r["name"]
+
+            system_rows.append(
+                {
+                    "fit_id": fit_id,
+                    "doctrine": display_name,
+                    "fitting_name": r["name"],
+                    "stock_requested": requested,
+                    "stock_available": available,
+                    "stock_needed": needed,
+                    "claimed_total": claimed_total,
+                    "claimed_by_me": claimed_by_me,
+                    "adjusted_needed": adjusted_needed,
+                    "claimants": claimants_display.get(fit_id, ""),
+                    "volume_m3": round(float(total_vol or 0), 2),
+                    "jita_sell_isk": int(jita_sell),
+                    "subsidy_isk": int(subsidy_isk),
+                    "alliance_purchase_isk": int(alliance_purchase_isk),
+                }
+            )
+
+        if system_rows:
+            results.append(
+                {
+                    "system_name": system.name,
+                    "system_description": system.description,
+                    "has_locations": allowed_locations is not None,
+                    "rows": system_rows,
+                    "totals": {
+                        "requested": sum(r["stock_requested"] for r in system_rows),
+                        "available": sum(r["stock_available"] for r in system_rows),
+                        "needed": sum(r["stock_needed"] for r in system_rows),
+                    },
+                }
+            )
+
+    return results
+
+
+def doctrine_insights(corporation_id: int | None = None):
+    from .payments import _user_id_for_issuer_eve_id, _main_name_for_user_id
+    from .reviews import _matched_fit_names_for_contract
+
+    cfg = _cfg()
+    if corporation_id is None:
+        corporation_id = cfg["corporation_id"]
+    now = timezone.now()
+    slow_threshold = now - timezone.timedelta(days=7)
+    expired_threshold = now - timezone.timedelta(days=30)
+
+    slow_contracts_qs = (
+        CorporateContract.objects.filter(
+            corporation_id=corporation_id,
+            status__iexact="outstanding",
+            date_issued__lt=slow_threshold,
+            date_expired__gt=now,
+        )
+        .exclude(aasubsidy_meta__review_status__in=[-1, 1])
+        .exclude(aasubsidy_meta__exempt=True)
+        .exclude(aasubsidy_meta__paid=True)
+        .select_related("issuer_name", "start_location_name", "aasubsidy_meta")
+        .order_by("date_issued")
+    )
+
+    all_contracts = list(slow_contracts_qs)
+
+    expired_q = (
+        Q(status__iexact="deleted")
+        | Q(status__iexact="expired")
+        | Q(status__iexact="cancelled")
+    )
+    expired_contracts_qs = (
+        CorporateContract.objects.filter(
+            expired_q,
+            corporation_id=corporation_id,
+            date_expired__gte=expired_threshold,
+            date_expired__lte=now,
+        )
+        .select_related("issuer_name", "start_location_name", "aasubsidy_meta")
+        .order_by("-date_expired")
+    )
+    all_contracts += list(expired_contracts_qs)
+
+    contract_titles = {}
+    valid_contract_ids = set()
+    for c in all_contracts:
+        meta = getattr(c, "aasubsidy_meta", None)
+        forced_id = getattr(meta, "forced_fitting_id", None)
+        if forced_id:
+            fit_name = (
+                Fitting.objects.filter(pk=forced_id).values_list("name", flat=True).first()
+            )
+            contract_titles[c.id] = f"{fit_name} (forced)" if fit_name else "Forced Doctrine"
+            valid_contract_ids.add(c.id)
+        else:
+            fit_names = _matched_fit_names_for_contract(c.id)
+            if fit_names:
+                contract_titles[c.id] = ", ".join(fit_names)
+                valid_contract_ids.add(c.id)
+            else:
+                continue
+
+    def get_display_issuer(c):
+        char_id = getattr(c.issuer_name, "eve_id", None)
+        uid = _user_id_for_issuer_eve_id(char_id)
+        fallback = getattr(c.issuer_name, "name", "Unknown")
+        return _main_name_for_user_id(uid, fallback)
+
+    slow_contracts = []
+    for c in slow_contracts_qs:
+        if c.id not in valid_contract_ids:
             continue
-
-        claimed_total = int(claims_by_fit.get(r["pk"], 0))
-        claimed_by_me = int(my_claims_by_fit.get(r["pk"], 0))
-        adjusted_needed = max(needed - claimed_total, 0)
-
-        jita_sell = Decimal(r["jita_sell_isk"] or 0)
-        total_vol = Decimal(r["total_vol"] or 0)
-        base = (jita_sell * pct) + (total_vol * per_m3)
-        base = base.quantize(Decimal("0.01"))
-        subsidy_isk = _ceil_to_increment(base, incr_val)
-        alliance_purchase_isk = _ceil_to_increment(jita_sell + base, incr_val)
-
-        rows.append(
+        slow_contracts.append(
             {
-                "fit_id": fit_id,
-                "doctrine": r["name"],
-                "stock_requested": requested,
-                "stock_available": available,
-                "stock_needed": needed,
-                "claimed_total": claimed_total,
-                "claimed_by_me": claimed_by_me,
-                "adjusted_needed": adjusted_needed,
-                "claimants": claimants_display.get(fit_id, ""),
-                "volume_m3": round(float(total_vol or 0), 2),
-                "jita_sell_isk": int(jita_sell),
-                "subsidy_isk": int(subsidy_isk),
-                "alliance_purchase_isk": int(alliance_purchase_isk),
+                "contract_id": c.contract_id,
+                "issuer": get_display_issuer(c),
+                "location": getattr(c.start_location_name, "location_name", "Unknown"),
+                "date_issued": c.date_issued,
+                "days_outstanding": (now - c.date_issued).days,
+                "title": contract_titles.get(c.id, "No Title"),
+                "price": c.price,
             }
         )
 
-    return rows
+    expired_contracts = []
+    for c in expired_contracts_qs:
+        if c.id not in valid_contract_ids:
+            continue
+        expired_contracts.append(
+            {
+                "contract_id": c.contract_id,
+                "issuer": get_display_issuer(c),
+                "location": getattr(c.start_location_name, "location_name", "Unknown"),
+                "date_expired": c.date_expired,
+                "title": contract_titles.get(c.id, "No Title"),
+                "price": c.price,
+                "status": c.status,
+            }
+        )
+
+    start = now - timezone.timedelta(days=365)
+    end = now + timezone.timedelta(days=1)
+    summary_data = doctrine_stock_summary(start, end, corporation_id=corporation_id)
+
+    unfulfilled_doctrines = []
+    for system in summary_data:
+        for row in system["rows"]:
+            if row["stock_needed"] > 0:
+                unfulfilled_doctrines.append(
+                    {
+                        "system": system["system_name"],
+                        "doctrine": row["doctrine"],
+                        "requested": row["stock_requested"],
+                        "available": row["stock_available"],
+                        "needed": row["stock_needed"],
+                        "fulfillment_pct": round(
+                            (row["stock_available"] / row["stock_requested"] * 100), 1
+                        )
+                        if row["stock_requested"] > 0
+                        else 0,
+                    }
+                )
+
+    unfulfilled_doctrines.sort(key=lambda x: (-x["needed"], x["fulfillment_pct"]))
+
+    return {
+        "slow_contracts": slow_contracts,
+        "expired_contracts": expired_contracts,
+        "unfulfilled_doctrines": unfulfilled_doctrines,
+    }

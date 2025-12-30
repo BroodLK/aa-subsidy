@@ -14,15 +14,16 @@ from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import TemplateView
+from django.db.models import Sum
 
 from allianceauth.authentication.models import CharacterOwnership
 from allianceauth.eveonline.models import EveCharacter
-from corptools.models import CorporateContract
+from corptools.models import CorporateContract, CorporateContractItem
 from fittings.models import Fitting
 
 from ..contracts.reviews import reviewer_table
-from ..contracts.summaries import doctrine_stock_summary
-from ..models import CorporateContractSubsidy, FittingClaim, UserTablePreference
+from ..contracts.summaries import doctrine_stock_summary, doctrine_insights
+from ..models import CorporateContractSubsidy, FittingClaim, UserTablePreference, SubsidyConfig
 from .payments import aggregate_payments_to_main, mark_all_unpaid_for_main_as_paid
 
 
@@ -91,16 +92,13 @@ class MainView(PermissionRequiredMixin, TemplateView):
         except Exception:
             pass
 
-        rows = doctrine_stock_summary(start, end)
-        total_requested = sum(int(r.get("stock_requested", 0) or 0) for r in rows)
-        total_available = sum(int(r.get("stock_available", 0) or 0) for r in rows)
-        total_needed = sum(int(r.get("stock_needed", 0) or 0) for r in rows)
-
-        ctx["rows"] = rows
-        ctx["totals"] = {
-            "requested": total_requested,
-            "available": total_available,
-            "needed": total_needed,
+        systems = doctrine_stock_summary(start, end)
+        
+        ctx["systems"] = systems
+        ctx["overall_totals"] = {
+            "requested": sum(s["totals"]["requested"] for s in systems),
+            "available": sum(s["totals"]["available"] for s in systems),
+            "needed": sum(s["totals"]["needed"] for s in systems),
         }
 
         if self.request.user.is_authenticated:
@@ -125,10 +123,11 @@ class UserStatsView(LoginRequiredMixin, PermissionRequiredMixin, TemplateView):
         ctx = super().get_context_data(**kwargs)
 
         char_eve_ids = _all_character_ids_for_user(self.request.user)
+        cfg = SubsidyConfig.active()
         contracts_qs = (
             CorporateContract.objects.filter(
                 issuer_name__eve_id__in=char_eve_ids,
-                corporation_id=1)
+                corporation_id=cfg.corporation_id)
             .select_related("issuer_name", "start_location_name", "aasubsidy_meta")
             .order_by("-date_issued")
         )
@@ -239,7 +238,8 @@ class ReviewerView(PermissionRequiredMixin, TemplateView):
         ctx = super().get_context_data(**kwargs)
         end = timezone.now()
         start = end - timedelta(days=30)
-        ctx["contracts"] = reviewer_table(start, end, corporation_id=1)
+        cfg = SubsidyConfig.active()
+        ctx["contracts"] = reviewer_table(start, end, corporation_id=cfg.corporation_id)
         ctx["all_fits"] = Fitting.objects.only("id", "name").order_by("name")
         if self.request.user.is_authenticated:
             pref = UserTablePreference.objects.filter(
@@ -260,11 +260,12 @@ class ApproveView(PermissionRequiredMixin, View):
 
     @transaction.atomic
     def post(self, request, contract_id: int):
+        cfg = SubsidyConfig.active()
         try:
             cc = (
                 CorporateContract.objects.select_for_update()
                 .only("id", "contract_id")
-                .get(contract_id=contract_id, corporation_id=1)
+                .get(contract_id=contract_id, corporation_id=cfg.corporation_id)
             )
         except CorporateContract.DoesNotExist:
             messages.error(request, "Contract not found.")
@@ -310,11 +311,12 @@ class DenyView(PermissionRequiredMixin, View):
 
     @transaction.atomic
     def post(self, request, contract_id: int):
+        cfg = SubsidyConfig.active()
         try:
             cc = (
                 CorporateContract.objects.select_for_update()
                 .only("id", "contract_id")
-                .get(contract_id=contract_id, corporation_id=1)
+                .get(contract_id=contract_id, corporation_id=cfg.corporation_id)
             )
         except CorporateContract.DoesNotExist:
             messages.error(request, "Contract not found.")
@@ -404,6 +406,17 @@ class PaymentsView(PermissionRequiredMixin, TemplateView):
         return ctx
 
 
+class DoctrineInsightsView(PermissionRequiredMixin, TemplateView):
+    template_name = "contracts/insights.html"
+    permission_required = "aasubsidy.basic_access"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        cfg = SubsidyConfig.active()
+        ctx["insights"] = doctrine_insights(corporation_id=cfg.corporation_id)
+        return ctx
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class MarkPaidView(PermissionRequiredMixin, View):
     permission_required = "aasubsidy.subsidy_admin"
@@ -437,16 +450,17 @@ class ForceFitView(PermissionRequiredMixin, View):
     @transaction.atomic
     def post(self, request, contract_id: int):
         fit_id_raw = request.POST.get("fit_id", "").strip()
+        cfg = SubsidyConfig.active()
         try:
             cc = CorporateContract.objects.select_for_update().only("id", "contract_id").get(
-                contract_id=contract_id, corporation_id=1
+                contract_id=contract_id, corporation_id=cfg.corporation_id
             )
         except CorporateContract.DoesNotExist:
             return JsonResponse({"ok": False, "error": "not_found"}, status=404)
 
         meta, _ = CorporateContractSubsidy.objects.select_for_update().get_or_create(contract_id=cc.pk)
 
-        if not fit_id_raw:
+        if not fit_id_raw or fit_id_raw == "__clear__":
             meta.forced_fitting = None
         else:
             try:
@@ -457,3 +471,34 @@ class ForceFitView(PermissionRequiredMixin, View):
 
         meta.save(update_fields=["forced_fitting"])
         return JsonResponse({"ok": True})
+
+
+class ContractItemsView(PermissionRequiredMixin, View):
+    permission_required = "aasubsidy.review_subsidy"
+
+    def get(self, request, contract_id: int):
+        cfg = SubsidyConfig.active()
+        try:
+            cc = CorporateContract.objects.get(
+                contract_id=contract_id, corporation_id=cfg.corporation_id
+            )
+        except CorporateContract.DoesNotExist:
+            return JsonResponse({"ok": False, "error": "not_found"}, status=404)
+
+        items = (
+            CorporateContractItem.objects.filter(contract_id=cc.pk)
+            .values("type_name__name", "is_included")
+            .annotate(total_qty=Sum("quantity"))
+            .order_by("-is_included", "type_name__name")
+        )
+
+        results = [
+            {
+                "name": item["type_name__name"],
+                "qty": item["total_qty"],
+                "is_included": item["is_included"],
+            }
+            for item in items
+        ]
+
+        return JsonResponse({"ok": True, "items": results})

@@ -19,7 +19,7 @@ STATICFILES_DIRS = [
     f"{PACKAGE}/static",
 ]
 
-SITE_URL = "https://example.com"
+SITE_URL = "https://localhost"
 CSRF_TRUSTED_ORIGINS = [SITE_URL]
 
 DISCORD_BOT_TOKEN = "My_Dummy_Token"
@@ -62,6 +62,9 @@ NOTIFICATIONS_MAX_PER_USER = 50
 
 # Add any additional apps to this list.
 INSTALLED_APPS += [
+    "eveuniverse",
+    "corptools",
+    "fittings",
     PACKAGE,
 ]
 
@@ -83,8 +86,8 @@ APPS_WITH_PUBLIC_VIEWS = []
 # https://developers.eveonline.com for Authentication
 # & API Access and fill out these settings.
 # Be sure to set the callback URL
-# to https://example.com/sso/callback
-# substituting your domain for aasubsidy.com
+# to https://aasubsidy.com/sso/callback
+# substituting your domain for yourdomain.com
 # Logging in to auth requires the publicData
 # scope (can be overridden through the
 # LOGIN_TOKEN_SCOPES setting).

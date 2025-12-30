@@ -8,6 +8,142 @@
       <div class="alert {% if message.tags %}alert-{{ message.tags }}{% else %}alert-info{% endif %}">{{ message }}</div>
     {% endfor %}
   {% endif %}
+  <div class="row mb-4">
+    <div class="col-md-6">
+      <div class="card bg-dark text-light border-secondary">
+        <div class="card-header border-secondary">{% trans "Doctrine Systems" %}</div>
+        <div class="card-body">
+          <form method="get" class="mb-3">
+            <label class="form-label">{% trans "Select System" %}</label>
+            <div class="input-group">
+              <select name="system_id" class="form-select form-select-sm" onchange="this.form.submit()">
+                {% for s in systems %}
+                <option value="{{ s.id }}" {% if s.id == selected_system_id %}selected{% endif %}>
+                  {{ s.name }}{% if not s.is_active %} ({% trans "Inactive" %}){% endif %}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+          </form>
+          <hr class="border-secondary">
+          <form method="post" class="row g-2 mb-2">
+            {% csrf_token %}
+            <div class="col-auto position-relative">
+              <input type="text" name="system_name" id="systemNameSearch" class="form-control form-control-sm" placeholder="{% trans 'Search Solar System...' %}" autocomplete="off" required>
+              <input type="hidden" name="system_eve_id" id="selectedSystemEveId">
+              <div id="systemSearchResults" class="list-group position-absolute w-100" style="z-index: 1050; display: none; top: 100%;"></div>
+            </div>
+            <div class="col-auto">
+              <button type="submit" name="create_system" class="btn btn-sm btn-success">{% trans "Create" %}</button>
+            </div>
+          </form>
+          {% if selected_system_id %}
+          <div class="d-flex gap-2 mb-3">
+            <form method="post">
+              {% csrf_token %}
+              <input type="hidden" name="system_id" value="{{ selected_system_id }}">
+              <button type="submit" name="toggle_active" class="btn btn-sm {% if selected_system.is_active %}btn-outline-warning{% else %}btn-outline-success{% endif %}">
+                {% if selected_system.is_active %}{% trans "Deactivate" %}{% else %}{% trans "Activate" %}{% endif %}
+              </button>
+            </form>
+            <form method="post" onsubmit="return confirm('{% trans 'Are you sure you want to delete this system and all its requested stock settings?' %}')">
+              {% csrf_token %}
+              <input type="hidden" name="system_id" value="{{ selected_system_id }}">
+              <button type="submit" name="delete_system" class="btn btn-sm btn-outline-danger">{% trans "Delete" %}</button>
+            </form>
+          </div>
+
+          <hr class="border-secondary">
+          <h6>{% trans "Associated Systems" %}</h6>
+          <div class="mb-3">
+            {% for loc in selected_system.locations.all %}
+            <div class="d-flex justify-content-between align-items-center mb-1 bg-secondary p-1 rounded">
+              <small>{{ loc.location.name }}</small>
+            </div>
+            {% empty %}
+            <p class="text-muted small">{% trans "No system associated. This doctrine system will show 0 stock." %}</p>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+      function setupAutocomplete(inputId, resultsId, hiddenId, category) {
+          const searchInput = document.getElementById(inputId);
+          const resultsContainer = document.getElementById(resultsId);
+          const selectedIdInput = document.getElementById(hiddenId);
+          let debounceTimer;
+
+          if (!searchInput) return;
+
+          searchInput.addEventListener('input', function() {
+              clearTimeout(debounceTimer);
+              const query = this.value;
+
+              if (query.length < 3) {
+                  resultsContainer.style.display = 'none';
+                  resultsContainer.innerHTML = '';
+                  return;
+              }
+
+              debounceTimer = setTimeout(() => {
+                  let url = `{% url 'aasubsidy:location_search' %}?q=${encodeURIComponent(query)}`;
+                  if (category) {
+                      url += `&category=${category}`;
+                  }
+                  fetch(url, {
+                      credentials: 'same-origin',
+                      headers: { 'Accept': 'application/json' },
+                  })
+                  .then(response => {
+                      if (!response.ok) {
+                          throw new Error(`location_search HTTP ${response.status}`);
+                      }
+                      return response.json();
+                  })
+                  .then(data => {
+                      resultsContainer.innerHTML = '';
+
+                      const results = (data && data.results) ? data.results : [];
+                      if (results.length > 0) {
+                          results.forEach(item => {
+                              const btn = document.createElement('button');
+                              btn.type = 'button';
+                              btn.className = 'list-group-item list-group-item-action list-group-item-dark py-1 px-2 small';
+                              btn.textContent = item.name;
+                              btn.addEventListener('click', function() {
+                                  searchInput.value = item.name;
+                                  selectedIdInput.value = item.id;
+                                  resultsContainer.style.display = 'none';
+                              });
+                              resultsContainer.appendChild(btn);
+                          });
+                          resultsContainer.style.display = 'block';
+                      } else {
+                          resultsContainer.style.display = 'none';
+                      }
+                  })
+                  .catch(err => {
+                      console.error('location_search failed:', err);
+                      resultsContainer.style.display = 'none';
+                  });
+              }, 300);
+          });
+
+          document.addEventListener('click', function(e) {
+              if (!resultsContainer.contains(e.target) && e.target !== searchInput) {
+                  resultsContainer.style.display = 'none';
+              }
+          });
+      }
+
+      setupAutocomplete('systemNameSearch', 'systemSearchResults', 'selectedSystemEveId', 'solar_system');
+  });
+</script>
+
   <h3 class="mb-3">{% trans "Doctrine Requested Stock" %}</h3>
 
   <table class="table table-sm table-dark align-middle">
@@ -23,19 +159,20 @@
       {% for d in doctrines %}
       <tr>
         <td>
-          <a class="link-light" href="{% url 'aasubsidy:doctrine_detail' d.name %}">{{ d.name }}</a>
+          <a class="link-light" href="{% url 'aasubsidy:doctrine_detail' d.name %}?system_id={{ selected_system_id }}">{{ d.name }}</a>
         </td>
         <td class="text-end">{{ d.requested }}</td>
         <td class="text-end">
           <form method="post" action="{% url 'aasubsidy:doctrine_admin' %}" class="d-inline">
             {% csrf_token %}
             <input type="hidden" name="doctrine_name" value="{{ d.name }}">
+            <input type="hidden" name="system_id" value="{{ selected_system_id }}">
             <input class="form-control form-control-sm d-inline-block w-auto" type="number" name="requested" min="0" step="1" value="{{ d.requested }}">
             <button class="btn btn-sm btn-primary" type="submit">{% trans "Apply to Doctrine" %}</button>
           </form>
         </td>
         <td class="text-end">
-          <a class="btn btn-sm btn-secondary" href="{% url 'aasubsidy:doctrine_detail' d.name %}">{% trans "Edit Fittings" %}</a>
+          <a class="btn btn-sm btn-secondary" href="{% url 'aasubsidy:doctrine_detail' d.name %}?system_id={{ selected_system_id }}">{% trans "Edit Fittings" %}</a>
         </td>
       </tr>
       {% empty %}

@@ -11,15 +11,41 @@ class General(models.Model):
             ("subsidy_admin", "Can adjust subsidy settings"),
         )
 
+class DoctrineSystem(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    description = models.TextField(blank=True, default="")
+    is_active = models.BooleanField(default=True, help_text="If inactive, it won't be shown in the summary page or admin by default")
+
+    def __str__(self) -> str:
+        return self.name
+
+    class Meta:
+        verbose_name = "Doctrine System"
+        verbose_name_plural = "Doctrine Systems"
+
+class DoctrineLocation(models.Model):
+    system = models.ForeignKey(DoctrineSystem, on_delete=models.CASCADE, related_name="locations")
+    location = models.ForeignKey("eveuniverse.EveEntity", on_delete=models.CASCADE, related_name="+", help_text="Station, Structure or System")
+
+    def __str__(self) -> str:
+        return f"{self.system.name}: {self.location.name}"
+
+    class Meta:
+        verbose_name = "Doctrine Location"
+        verbose_name_plural = "Doctrine Locations"
+        unique_together = ("system", "location")
+
 class FittingRequest(models.Model):
-    fitting = models.OneToOneField(
-        "fittings.Fitting", on_delete=models.CASCADE, related_name="subsidy_request", db_index=True
+    system = models.ForeignKey(DoctrineSystem, on_delete=models.CASCADE, related_name="fitting_requests", null=True)
+    fitting = models.ForeignKey(
+        "fittings.Fitting", on_delete=models.CASCADE, related_name="subsidy_requests", db_index=True
     )
     requested = models.IntegerField(default=0)
 
     class Meta:
         verbose_name = "Fitting Request"
         verbose_name_plural = "Fitting Requests"
+        unique_together = ("system", "fitting")
 
 class SubsidyItemPrice(models.Model):
     eve_type = models.OneToOneField(
@@ -88,6 +114,7 @@ class SubsidyConfig(models.Model):
     cost_per_m3 = models.DecimalField(max_digits=20, decimal_places=4, default=250)
     rounding_increment = models.IntegerField(default=250000, help_text="ISK rounding increment")
     deleted_check = models.BooleanField(default=True)
+    corporation_id = models.IntegerField(default=1, help_text="The ID of the corporation whose contracts should be subsidized")
 
     class Meta:
         verbose_name = "Subsidy Configuration"

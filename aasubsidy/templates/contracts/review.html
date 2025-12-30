@@ -84,7 +84,7 @@
           </thead>
           <tbody>
             {% for row in contracts %}
-            <tr class="text-center">
+            <tr class="text-center contract-row" data-id="{{ row.id }}" style="cursor: pointer;">
               <td data-val="{{ row.id }}">{{ row.id }}</td>
               <td data-val="{{ row.issuer }}">
                 <span class="copyable" data-copy="{{ row.issuer }}" title="{% trans 'Click to copy' %}">
@@ -153,6 +153,22 @@
               </td>
               <td class="text-center align-middle">
                 <input type="checkbox" class="form-check-input bulk-row-check" data-id="{{ row.id }}">
+              </td>
+            </tr>
+            <tr id="details-{{ row.id }}" class="collapse detail-row">
+              <td colspan="15" class="bg-dark p-3">
+                <div class="card bg-secondary text-light">
+                  <div class="card-header border-light py-1">
+                    <h6 class="m-0 small">{% trans "Contract Items" %}</h6>
+                  </div>
+                  <div class="card-body p-0">
+                    <div class="items-container" data-id="{{ row.id }}">
+                      <div class="text-center p-3">
+                        <div class="spinner-border spinner-border-sm text-light" role="status"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </td>
             </tr>
             {% empty %}
@@ -255,6 +271,66 @@
         }
       }
     });
+
+    // Handle accordion toggle and item loading
+    document.querySelectorAll('.contract-row td:nth-child(6)').forEach(td => {
+      td.style.cursor = 'pointer';
+      td.addEventListener('click', function(e) {
+        // Don't toggle if clicking on interactive elements within the cell (if any)
+        if (e.target.closest('button') || e.target.closest('select') || e.target.closest('input') || e.target.closest('.copyable')) {
+          return;
+        }
+
+        const row = this.closest('.contract-row');
+        const id = row.getAttribute('data-id');
+        const detailRow = document.getElementById(`details-${id}`);
+        const isOpening = !detailRow.classList.contains('show');
+
+        // Close all other open details
+        document.querySelectorAll('.detail-row.show').forEach(el => {
+            if (el.id !== `details-${id}`) {
+                const bsCollapse = bootstrap.Collapse.getInstance(el) || new bootstrap.Collapse(el, {toggle:false});
+                bsCollapse.hide();
+            }
+        });
+
+        // Toggle current
+        const bsCollapse = bootstrap.Collapse.getInstance(detailRow) || new bootstrap.Collapse(detailRow, {toggle:false});
+        if (isOpening) {
+            bsCollapse.show();
+            loadContractItems(id);
+        } else {
+            bsCollapse.hide();
+        }
+      });
+    });
+
+    async function loadContractItems(id) {
+        const container = document.querySelector(`.items-container[data-id="${id}"]`);
+        if (container.getAttribute('data-loaded') === 'true') return;
+
+        try {
+            const url = `/aasubsidy/contract/${id}/items/`;
+            const resp = await fetch(url);
+            const data = await resp.json();
+            if (!resp.ok || !data.ok) throw new Error(data.error || 'Failed to load items');
+
+            let html = '<table class="table table-sm table-dark mb-0 font-monospace" style="font-size: 0.8rem;">';
+            html += '<thead><tr><th>Type</th><th class="text-end">Qty</th><th class="text-center">Included</th></tr></thead><tbody>';
+            data.items.forEach(item => {
+                html += `<tr>
+                    <td>${item.name}</td>
+                    <td class="text-end">${item.qty.toLocaleString()}</td>
+                    <td class="text-center">${item.is_included ? '<i class="fas fa-check text-success"></i>' : '<i class="fas fa-times text-danger"></i>'}</td>
+                </tr>`;
+            });
+            html += '</tbody></table>';
+            container.innerHTML = html;
+            container.setAttribute('data-loaded', 'true');
+        } catch (err) {
+            container.innerHTML = `<div class="p-2 text-danger">Error: ${err.message}</div>`;
+        }
+    }
 
     const table = document.getElementById('contractsTable');
     if (!table) { hideLoading(); return; }

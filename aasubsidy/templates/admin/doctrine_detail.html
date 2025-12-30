@@ -8,9 +8,25 @@
       <div class="alert {% if message.tags %}alert-{{ message.tags }}{% else %}alert-info{% endif %}">{{ message }}</div>
     {% endfor %}
   {% endif %}
+  <div class="card bg-dark text-light border-secondary mb-4 col-md-4">
+    <div class="card-header border-secondary">{% trans "Doctrine System" %}</div>
+    <div class="card-body">
+      <form method="get">
+        <select name="system_id" class="form-select form-select-sm" onchange="this.form.submit()">
+          {% for s in systems %}
+          <option value="{{ s.id }}" {% if s.id == selected_system_id %}selected{% endif %}>
+            {{ s.name }}{% if not s.is_active %} ({% trans "Inactive" %}){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </form>
+    </div>
+  </div>
+
   <h3 class="mb-3">{% blocktrans %}Edit Requested Stock for Doctrine "{{ doctrine_name }}"{% endblocktrans %}</h3>
   <form method="post">
     {% csrf_token %}
+    <input type="hidden" name="system_id" value="{{ selected_system_id }}">
     <table class="table table-sm table-dark align-middle">
       <thead>
         <tr>
@@ -36,7 +52,7 @@
       </tbody>
     </table>
     <div class="text-end">
-      <a class="btn btn-secondary" href="{% url 'aasubsidy:doctrine_admin' %}">{% trans "Back" %}</a>
+      <a class="btn btn-secondary" href="{% url 'aasubsidy:doctrine_admin' %}?system_id={{ selected_system_id }}">{% trans "Back" %}</a>
       <button class="btn btn-primary" type="submit">{% trans "Save" %}</button>
     </div>
   </form>

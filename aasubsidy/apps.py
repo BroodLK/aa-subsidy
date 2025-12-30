@@ -3,13 +3,13 @@
 # Django
 from django.apps import AppConfig
 
-# AA Example App
+# AA Subsidy App
 from aasubsidy import __version__
 
 
-class ExampleConfig(AppConfig):
+class AasubsidyConfig(AppConfig):
     """App Config"""
 
     name = "aasubsidy"
     label = "aasubsidy"
-    verbose_name = f"Example App v{__version__}"
+    verbose_name = f"AA Subsidy v{__version__}"

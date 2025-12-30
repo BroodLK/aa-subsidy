@@ -1,0 +1,128 @@
+{% extends 'contracts/base.html' %}
+{% load i18n humanize %}
+
+{% block details %}
+<div class="container-xxl py-3">
+    <div class="row align-items-stretch">
+        <div class="col-md-4">
+            <div class="card mb-4 bg-dark text-light border-secondary h-100">
+                <div class="card-header border-secondary d-flex justify-content-between align-items-center">
+                    <h3 class="m-0">{% trans "Unfulfilled Requests" %}</h3>
+                </div>
+                <div class="card-body p-2 d-flex flex-column">
+                    <div class="table-responsive flex-grow-1" style="max-height: 800px; overflow-y: auto;">
+                        <table class="table table-sm align-middle mb-0 table-bordered table-dark">
+                            <thead>
+                                <tr class="text-center">
+                                    <th>{% trans "System" %}</th>
+                                    <th>{% trans "Doctrine" %}</th>
+                                    <th>{% trans "Needed" %}</th>
+                                    <th>{% trans "Fulfillment" %}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for r in insights.unfulfilled_doctrines %}
+                                <tr>
+                                    <td>{{ r.system }}</td>
+                                    <td>{{ r.doctrine }}</td>
+                                    <td class="text-end text-danger fw-bold">{{ r.needed|intcomma }}</td>
+                                    <td class="text-end">
+                                        <div class="progress" style="height: 10px; background-color: #343a40;">
+                                            <div class="progress-bar {% if r.fulfillment_pct < 25 %}bg-danger{% elif r.fulfillment_pct < 75 %}bg-warning{% else %}bg-success{% endif %}"
+                                                 role="progressbar" style="width: {{ r.fulfillment_pct }}%"
+                                                 aria-valuenow="{{ r.fulfillment_pct }}" aria-valuemin="0" aria-valuemax="100"></div>
+                                        </div>
+                                        <small>{{ r.fulfillment_pct }}%</small>
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="4" class="text-center text-muted">{% trans "No unfulfilled requests." %}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card mb-4 bg-dark text-light border-secondary">
+                <div class="card-header border-secondary d-flex justify-content-between align-items-center">
+                    <h3 class="m-0">{% trans "Slow Moving" %}</h3>
+                </div>
+                <div class="card-body p-2" style="max-height: 600px; overflow-y: auto;">
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0 table-bordered table-dark">
+                            <thead>
+                                <tr class="text-center">
+                                    <th>{% trans "Doctrine" %}</th>
+                                    <th>{% trans "Issuer" %}</th>
+                                    <th>{% trans "Days" %}</th>
+                                    <th>{% trans "Price" %}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for c in insights.slow_contracts %}
+                                <tr>
+                                    <td>{{ c.title }}</td>
+                                    <td>{{ c.issuer }}</td>
+                                    <td class="text-end text-warning fw-bold">{{ c.days_outstanding }}</td>
+                                    <td class="text-end">{{ c.price|intcomma }}</td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="4" class="text-center text-muted">{% trans "No slow moving contracts." %}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card mb-4 bg-dark text-light border-secondary">
+                <div class="card-header border-secondary d-flex justify-content-between align-items-center">
+                    <h3 class="m-0">{% trans "Expired" %}</h3>
+                </div>
+                <div class="card-body p-2" style="max-height: 600px; overflow-y: auto;">
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0 table-bordered table-dark">
+                            <thead>
+                                <tr class="text-center">
+                                    <th>{% trans "Doctrine" %}</th>
+                                    <th>{% trans "Issuer" %}</th>
+                                    <th>{% trans "Expired" %}</th>
+                                    <th>{% trans "Status" %}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for c in insights.expired_contracts %}
+                                <tr>
+                                    <td>{{ c.title }}</td>
+                                    <td>{{ c.issuer }}</td>
+                                    <td class="text-end text-danger small fw-bold">{{ c.date_expired|naturaltime }}</td>
+                                    <td class="text-end"><span class="badge bg-secondary">{{ c.status }}</span></td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="4" class="text-center text-muted">{% trans "No recently expired contracts." %}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<style>
+    .container-xxl { max-width: 100%; }
+    .copyable { cursor: pointer; }
+    th[data-col] { cursor: pointer; }
+</style>
+{% endblock %}

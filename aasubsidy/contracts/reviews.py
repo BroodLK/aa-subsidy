@@ -22,11 +22,12 @@ def _cfg():
         "pct": cfg.pct_over_basis,
         "m3": cfg.cost_per_m3,
         "incr": cfg.rounding_increment or INCR,
+        "corporation_id": cfg.corporation_id,
     }
 
 def _matched_fit_names_for_contract(contract_pk: int) -> list[str]:
     ci_for_contract_type = (
-        CorporateContractItem.objects.filter(contract_id=contract_pk, type_name_id=OuterRef("type_id"))
+        CorporateContractItem.objects.filter(contract_id=contract_pk, type_name_id=OuterRef("type_id"), is_included=True)
         .values("type_name_id")
         .annotate(q=Sum("quantity"))
         .values("q")
@@ -36,9 +37,19 @@ def _matched_fit_names_for_contract(contract_pk: int) -> list[str]:
         .annotate(have_qty=Coalesce(Subquery(ci_for_contract_type), Value(0)))
         .filter(have_qty__lt=F("quantity"))
     )
+    
+    # Check if hull is present
+    ci_for_hull = (
+        CorporateContractItem.objects.filter(contract_id=contract_pk, type_name_id=OuterRef("ship_type_type_id"), is_included=True)
+        .values("type_name_id")
+        .annotate(q=Sum("quantity"))
+        .values("q")
+    )
+    hull_check = Coalesce(Subquery(ci_for_hull), Value(0))
+
     return list(
-        Fitting.objects.annotate(has_missing=Exists(missing_item))
-        .filter(has_missing=False)
+        Fitting.objects.annotate(has_missing=Exists(missing_item), hull_qty=hull_check)
+        .filter(has_missing=False, hull_qty__gte=1)
         .values_list("name", flat=True)
         .order_by("name")
     )
@@ -61,8 +72,10 @@ def _display_issuer_name(entity_name: str) -> str:
     except Exception:
         return entity_name
 
-def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 1):
+def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = None):
     cfg = _cfg()
+    if corporation_id is None:
+        corporation_id = cfg.get("corporation_id")
     DEC_0 = DecimalField(max_digits=30, decimal_places=0)
     DEC_2 = DecimalField(max_digits=30, decimal_places=2)
     DEC_4 = DecimalField(max_digits=30, decimal_places=4)
@@ -93,12 +106,11 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
 
     ci_qty = (
         CorporateContractItem.objects
-        .filter(contract_id=OuterRef("pk"), type_name_id=OuterRef("type_id"))
+        .filter(contract_id=OuterRef("pk"), type_name_id=OuterRef("type_id"), is_included=True)
         .values("type_name_id")
         .annotate(q=Sum("quantity"))
         .values("q")
     )
-
     missing_item = (
         FittingItem.objects
         .filter(fit_id=OuterRef("fit_id"))
@@ -106,11 +118,20 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
         .filter(have_qty__lt=F("quantity"))
     )
 
+    # Check if hull is present
+    ci_for_hull_subq = (
+        CorporateContractItem.objects.filter(contract_id=OuterRef("pk"), type_name_id=OuterRef("ship_type_type_id"), is_included=True)
+        .values("type_name_id")
+        .annotate(q=Sum("quantity"))
+        .values("q")
+    )
+    hull_check_subq = Coalesce(Subquery(ci_for_hull_subq), Value(0))
+
     matching_fit_ids = (
         Fitting.objects
-        .annotate(fit_id=F("pk"))
+        .annotate(fit_id=F("pk"), hull_qty=hull_check_subq)
         .annotate(has_missing=Exists(missing_item))
-        .filter(has_missing=False)
+        .filter(has_missing=False, hull_qty__gte=1)
         .values("pk")
     )
 
@@ -203,11 +224,11 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
     qs = (
         base_contracts
         .annotate(min_basis=min_basis_subq, suggested_subsidy=suggested_subq)
-        .select_related("issuer_name", "start_location_name", "aasubsidy_meta")
+        .select_related("issuer_name", "start_location_name__system", "aasubsidy_meta")
         .order_by("-date_issued")
         .values(
-            "pk", "contract_id", "date_issued", "price", "status", "title",
-            "issuer_name__name", "start_location_name__location_name",
+            "pk", "contract_id", "date_issued", "price", "status", "title", "start_location_id",
+            "issuer_name__name", "start_location_name__location_name", "start_location_name__system__name",
             "aasubsidy_meta__review_status", "aasubsidy_meta__subsidy_amount",
             "aasubsidy_meta__reason", "aasubsidy_meta__paid",
             "aasubsidy_meta__forced_fitting_id",
@@ -240,7 +261,7 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
                         .filter(fit_id=OuterRef("fit_id"))
                         .annotate(have_qty=Coalesce(Subquery(
                             CorporateContractItem.objects
-                            .filter(contract_id=c["pk"], type_name_id=OuterRef("type_id"))
+                            .filter(contract_id=c["pk"], type_name_id=OuterRef("type_id"), is_included=True)
                             .values("type_name_id").annotate(q=Sum("quantity")).values("q")
                         ), Value(0)))
                         .filter(have_qty__lt=F("quantity"))
@@ -369,7 +390,11 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
                 pct_jita = 0.0
 
         prefill_subsidy = float(c["aasubsidy_meta__subsidy_amount"] or 0.0) or suggested
-        station_val = c["start_location_name__location_name"] or "Unknown"
+        station_val = (
+            c["start_location_name__location_name"] or
+            c["start_location_name__system__name"] or
+            "Unknown"
+        )
 
         issuer_display = _display_issuer_name(c["issuer_name__name"])
         rows.append({

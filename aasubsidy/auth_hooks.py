@@ -7,11 +7,11 @@ from django.utils.translation import gettext_lazy as _
 from allianceauth import hooks
 from allianceauth.services.hooks import MenuItemHook, UrlHook
 
-# AA Example App
+# AA Subsidy App
 from aasubsidy import urls
 
 
-class ExampleMenuItem(MenuItemHook):
+class AasubsidyMenuItem(MenuItemHook):
     """This class ensures only authorized users will see the menu entry"""
 
     def __init__(self):
@@ -37,7 +37,7 @@ class ExampleMenuItem(MenuItemHook):
 def register_menu():
     """Register the menu item"""
 
-    return ExampleMenuItem()
+    return AasubsidyMenuItem()
 
 
 @hooks.register("url_hook")
