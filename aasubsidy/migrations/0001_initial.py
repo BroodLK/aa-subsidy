@@ -74,20 +74,6 @@ class Migration(migrations.Migration):
             },
         ),
         migrations.CreateModel(
-            name='FittingRequest',
-            fields=[
-                ('id', models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('requested', models.IntegerField(default=0)),
-                ('fitting', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='subsidy_requests', to='fittings.fitting')),
-                ('system', models.ForeignKey(null=True, on_delete=django.db.models.deletion.CASCADE, related_name='fitting_requests', to='aasubsidy.doctrinesystem')),
-            ],
-            options={
-                'verbose_name': 'Fitting Request',
-                'verbose_name_plural': 'Fitting Requests',
-                'unique_together': {('system', 'fitting')},
-            },
-        ),
-        migrations.CreateModel(
             name='FittingClaim',
             fields=[
                 ('id', models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
