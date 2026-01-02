@@ -240,6 +240,10 @@
   .container-xxl { max-width: 100%; }
   .copyable { cursor: pointer; }
   th[data-col] { cursor: pointer; }
+  .contract-row { cursor: pointer; }
+  .detail-row { display: none; }
+  .detail-row.show { display: table-row; }
+  .detail-row.collapsing { display: table-row; }
 </style>
 <script>
 (function() {
@@ -276,9 +280,9 @@
     document.querySelectorAll('.contract-row').forEach(row => {
       row.addEventListener('click', function(e) {
         // Don't toggle if clicking on interactive elements
-        if (e.target.closest('button') || 
-            e.target.closest('select') || 
-            e.target.closest('input') || 
+        if (e.target.closest('button') ||
+            e.target.closest('select') ||
+            e.target.closest('input') ||
             e.target.closest('.copyable') ||
             e.target.closest('.force-fit-container') ||
             e.target.closest('.doctrine-display')
@@ -291,24 +295,53 @@
         if (!detailRow) return;
 
         const isOpening = !detailRow.classList.contains('show');
-        const bootstrap = window.bootstrap;
-        if (!bootstrap || !bootstrap.Collapse) return;
+
+        // Check for Bootstrap Collapse
+        if (!window.bootstrap || !window.bootstrap.Collapse) {
+          console.error('Bootstrap Collapse not available');
+          // Fallback: manual toggle
+          if (isOpening) {
+            document.querySelectorAll('.detail-row.show').forEach(el => {
+              if (el.id !== `details-${id}`) el.classList.remove('show');
+            });
+            detailRow.classList.add('show');
+            loadContractItems(id);
+          } else {
+            detailRow.classList.remove('show');
+          }
+          return;
+        }
 
         // Close all other open details
         document.querySelectorAll('.detail-row.show').forEach(el => {
             if (el.id !== `details-${id}`) {
-                const bsCollapse = bootstrap.Collapse.getInstance(el) || new bootstrap.Collapse(el, {toggle:false});
-                bsCollapse.hide();
+                try {
+                  const bsCollapse = window.bootstrap.Collapse.getInstance(el) || new window.bootstrap.Collapse(el, {toggle:false});
+                  bsCollapse.hide();
+                } catch(err) {
+                  el.classList.remove('show');
+                }
             }
         });
 
         // Toggle current
-        const bsCollapse = bootstrap.Collapse.getInstance(detailRow) || new bootstrap.Collapse(detailRow, {toggle:false});
-        if (isOpening) {
-            bsCollapse.show();
+        try {
+          const bsCollapse = window.bootstrap.Collapse.getInstance(detailRow) || new window.bootstrap.Collapse(detailRow, {toggle:false});
+          if (isOpening) {
+              bsCollapse.show();
+              loadContractItems(id);
+          } else {
+              bsCollapse.hide();
+          }
+        } catch(err) {
+          console.error('Bootstrap Collapse error:', err);
+          // Fallback
+          if (isOpening) {
+            detailRow.classList.add('show');
             loadContractItems(id);
-        } else {
-            bsCollapse.hide();
+          } else {
+            detailRow.classList.remove('show');
+          }
         }
       });
     });
