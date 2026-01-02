@@ -155,7 +155,7 @@
                 <input type="checkbox" class="form-check-input bulk-row-check" data-id="{{ row.id }}">
               </td>
             </tr>
-            <tr id="details-{{ row.id }}" class="collapse detail-row">
+            <tr id="details-{{ row.id }}" class="detail-row">
               <td colspan="15" class="bg-dark p-3">
                 <div class="card bg-secondary text-light">
                   <div class="card-header border-light py-1">
@@ -306,54 +306,26 @@
 
           const isOpening = !detailRow.classList.contains('show');
           console.log('Toggle detail row:', id, 'isOpening:', isOpening);
+          console.log('Bootstrap available:', !!window.bootstrap, 'Collapse available:', !!(window.bootstrap && window.bootstrap.Collapse));
 
-          // Check for Bootstrap Collapse
-          if (!window.bootstrap || !window.bootstrap.Collapse) {
-            console.warn('Bootstrap Collapse not available, using fallback');
-            // Fallback: manual toggle
-            if (isOpening) {
-              document.querySelectorAll('.detail-row.show').forEach(function(el) {
-                if (el.id !== 'details-' + id) el.classList.remove('show');
-              });
-              detailRow.classList.add('show');
-              loadContractItems(id);
-            } else {
-              detailRow.classList.remove('show');
-            }
-            return;
-          }
-
+          // Use simple toggle without Bootstrap Collapse - more reliable
           // Close all other open details
           document.querySelectorAll('.detail-row.show').forEach(function(el) {
-              if (el.id !== 'details-' + id) {
-                  try {
-                    const bsCollapse = window.bootstrap.Collapse.getInstance(el) || new window.bootstrap.Collapse(el, {toggle:false});
-                    bsCollapse.hide();
-                  } catch(err) {
-                    console.error('Error hiding collapse:', err);
-                    el.classList.remove('show');
-                  }
-              }
+            if (el.id !== 'details-' + id) {
+              el.classList.remove('show');
+              console.log('Closed detail row:', el.id);
+            }
           });
 
           // Toggle current
-          try {
-            const bsCollapse = window.bootstrap.Collapse.getInstance(detailRow) || new window.bootstrap.Collapse(detailRow, {toggle:false});
-            if (isOpening) {
-                bsCollapse.show();
-                loadContractItems(id);
-            } else {
-                bsCollapse.hide();
-            }
-          } catch(err) {
-            console.error('Bootstrap Collapse error:', err);
-            // Fallback
-            if (isOpening) {
-              detailRow.classList.add('show');
-              loadContractItems(id);
-            } else {
-              detailRow.classList.remove('show');
-            }
+          if (isOpening) {
+            detailRow.classList.add('show');
+            console.log('Opening detail row, classes:', detailRow.className);
+            console.log('Display style:', window.getComputedStyle(detailRow).display);
+            loadContractItems(id);
+          } else {
+            detailRow.classList.remove('show');
+            console.log('Closing detail row');
           }
         });
       });
