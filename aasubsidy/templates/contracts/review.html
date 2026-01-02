@@ -277,74 +277,89 @@
     });
 
     // Handle accordion toggle and item loading
-    document.querySelectorAll('.contract-row').forEach(row => {
-      row.addEventListener('click', function(e) {
-        // Don't toggle if clicking on interactive elements
-        if (e.target.closest('button') ||
-            e.target.closest('select') ||
-            e.target.closest('input') ||
-            e.target.closest('.copyable') ||
-            e.target.closest('.force-fit-container') ||
-            e.target.closest('.doctrine-display')
-        ) {
-          return;
-        }
+    function setupRowClickHandlers() {
+      const rows = document.querySelectorAll('.contract-row');
+      console.log('Setting up click handlers for', rows.length, 'contract rows');
 
-        const id = this.getAttribute('data-id');
-        const detailRow = document.getElementById(`details-${id}`);
-        if (!detailRow) return;
+      rows.forEach(function(row) {
+        row.addEventListener('click', function(e) {
+          console.log('Row clicked:', this.getAttribute('data-id'));
 
-        const isOpening = !detailRow.classList.contains('show');
-
-        // Check for Bootstrap Collapse
-        if (!window.bootstrap || !window.bootstrap.Collapse) {
-          console.error('Bootstrap Collapse not available');
-          // Fallback: manual toggle
-          if (isOpening) {
-            document.querySelectorAll('.detail-row.show').forEach(el => {
-              if (el.id !== `details-${id}`) el.classList.remove('show');
-            });
-            detailRow.classList.add('show');
-            loadContractItems(id);
-          } else {
-            detailRow.classList.remove('show');
+          // Don't toggle if clicking on interactive elements
+          if (e.target.closest('button') ||
+              e.target.closest('select') ||
+              e.target.closest('input') ||
+              e.target.closest('.copyable') ||
+              e.target.closest('.force-fit-container') ||
+              e.target.closest('.doctrine-display')
+          ) {
+            console.log('Clicked on interactive element, ignoring');
+            return;
           }
-          return;
-        }
 
-        // Close all other open details
-        document.querySelectorAll('.detail-row.show').forEach(el => {
-            if (el.id !== `details-${id}`) {
-                try {
-                  const bsCollapse = window.bootstrap.Collapse.getInstance(el) || new window.bootstrap.Collapse(el, {toggle:false});
-                  bsCollapse.hide();
-                } catch(err) {
-                  el.classList.remove('show');
-                }
-            }
-        });
+          const id = this.getAttribute('data-id');
+          const detailRow = document.getElementById('details-' + id);
+          if (!detailRow) {
+            console.error('Detail row not found for id:', id);
+            return;
+          }
 
-        // Toggle current
-        try {
-          const bsCollapse = window.bootstrap.Collapse.getInstance(detailRow) || new window.bootstrap.Collapse(detailRow, {toggle:false});
-          if (isOpening) {
-              bsCollapse.show();
+          const isOpening = !detailRow.classList.contains('show');
+          console.log('Toggle detail row:', id, 'isOpening:', isOpening);
+
+          // Check for Bootstrap Collapse
+          if (!window.bootstrap || !window.bootstrap.Collapse) {
+            console.warn('Bootstrap Collapse not available, using fallback');
+            // Fallback: manual toggle
+            if (isOpening) {
+              document.querySelectorAll('.detail-row.show').forEach(function(el) {
+                if (el.id !== 'details-' + id) el.classList.remove('show');
+              });
+              detailRow.classList.add('show');
               loadContractItems(id);
-          } else {
-              bsCollapse.hide();
+            } else {
+              detailRow.classList.remove('show');
+            }
+            return;
           }
-        } catch(err) {
-          console.error('Bootstrap Collapse error:', err);
-          // Fallback
-          if (isOpening) {
-            detailRow.classList.add('show');
-            loadContractItems(id);
-          } else {
-            detailRow.classList.remove('show');
+
+          // Close all other open details
+          document.querySelectorAll('.detail-row.show').forEach(function(el) {
+              if (el.id !== 'details-' + id) {
+                  try {
+                    const bsCollapse = window.bootstrap.Collapse.getInstance(el) || new window.bootstrap.Collapse(el, {toggle:false});
+                    bsCollapse.hide();
+                  } catch(err) {
+                    console.error('Error hiding collapse:', err);
+                    el.classList.remove('show');
+                  }
+              }
+          });
+
+          // Toggle current
+          try {
+            const bsCollapse = window.bootstrap.Collapse.getInstance(detailRow) || new window.bootstrap.Collapse(detailRow, {toggle:false});
+            if (isOpening) {
+                bsCollapse.show();
+                loadContractItems(id);
+            } else {
+                bsCollapse.hide();
+            }
+          } catch(err) {
+            console.error('Bootstrap Collapse error:', err);
+            // Fallback
+            if (isOpening) {
+              detailRow.classList.add('show');
+              loadContractItems(id);
+            } else {
+              detailRow.classList.remove('show');
+            }
           }
-        }
+        });
       });
-    });
+    }
+
+    setupRowClickHandlers();
 
     async function loadContractItems(id) {
         const container = document.querySelector(`.items-container[data-id="${id}"]`);
