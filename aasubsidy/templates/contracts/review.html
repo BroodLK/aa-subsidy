@@ -310,7 +310,7 @@
         if (container.getAttribute('data-loaded') === 'true') return;
 
         try {
-            const url = `/aasubsidy/contract/${id}/items/`;
+            const url = "{% url 'aasubsidy:contract_items' 0 %}".replace("/0/", `/${id}/`);
             const resp = await fetch(url);
             const data = await resp.json();
             if (!resp.ok || !data.ok) throw new Error(data.error || 'Failed to load items');

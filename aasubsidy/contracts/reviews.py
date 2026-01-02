@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Iterable
 from django.db.models import F, Sum, Value, OuterRef, Subquery, Exists, ExpressionWrapper, Q
 from django.db.models.functions import Coalesce
 from fittings.models import Fitting, FittingItem
@@ -56,12 +57,10 @@ def _matched_fit_names_for_contract(contract_pk: int) -> list[str]:
 
 def _display_issuer_name(entity_name: str) -> str:
     try:
-        ent = EveEntity.objects.filter(name=entity_name).values("id", "eve_id").first()
+        ent = EveEntity.objects.filter(name=entity_name).values("id").first()
         if not ent:
             return entity_name
-        char = EveCharacter.objects.filter(eve_id=ent.get("eve_id")).select_related("character_ownership__user__profile").first()
-        if not char:
-            char = EveCharacter.objects.filter(eve_id=ent.get("id")).select_related("character_ownership__user__profile").first()
+        char = EveCharacter.objects.filter(character_id=ent.get("id")).select_related("character_ownership__user__profile").first()
         if not char or not getattr(char, "character_ownership", None):
             return entity_name
         main_char = char.character_ownership.user.profile.main_character
@@ -71,6 +70,42 @@ def _display_issuer_name(entity_name: str) -> str:
         return entity_name
     except Exception:
         return entity_name
+
+def _bulk_display_issuer_names(entity_names: Iterable[str]) -> dict[str, str]:
+    names = list(set(entity_names))
+    entities = EveEntity.objects.filter(name__in=names).values("name", "id")
+    entity_map = {e["name"]: e for e in entities}
+    
+    ids = {e["id"] for e in entities}
+    all_target_ids = ids
+    
+    chars = EveCharacter.objects.filter(
+        character_id__in=all_target_ids
+    ).select_related("character_ownership__user__profile__main_character")
+    
+    char_map = {}
+    for char in chars:
+        char_map[char.character_id] = char
+        
+    results = {}
+    for name in names:
+        ent = entity_map.get(name)
+        if not ent:
+            results[name] = name
+            continue
+        
+        char = char_map.get(ent["id"])
+        if not char or not getattr(char, "character_ownership", None):
+            results[name] = name
+            continue
+            
+        main_char = char.character_ownership.user.profile.main_character
+        main_name = getattr(main_char, "character_name", None)
+        if main_name and main_name != name:
+            results[name] = f"{main_name} ({name})"
+        else:
+            results[name] = name
+    return results
 
 def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = None):
     cfg = _cfg()
@@ -214,16 +249,25 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
         .filter(pk__in=Subquery(matching_fit_ids))
         .annotate(basis_total=fit_basis_total, total_vol=fit_total_vol)
         .annotate(suggested=fit_suggested)
-        .values("pk", "basis_total", "suggested", "name")
+        .values("pk", "basis_total", "suggested", "name", "total_vol")
         .order_by("basis_total")
     )
 
     min_basis_subq = Subquery(per_contract_fit_calc.values("basis_total")[:1], output_field=DEC_2)
     suggested_subq = Subquery(per_contract_fit_calc.values("suggested")[:1], output_field=DEC_2)
+    best_fit_id_subq = Subquery(per_contract_fit_calc.values("pk")[:1])
+    best_fit_name_subq = Subquery(per_contract_fit_calc.values("name")[:1])
+    best_fit_vol_subq = Subquery(per_contract_fit_calc.values("total_vol")[:1], output_field=DEC_4)
 
-    qs = (
+    qs_list = (
         base_contracts
-        .annotate(min_basis=min_basis_subq, suggested_subsidy=suggested_subq)
+        .annotate(
+            min_basis=min_basis_subq, 
+            suggested_subsidy=suggested_subq,
+            best_fit_id=best_fit_id_subq,
+            best_fit_name=best_fit_name_subq,
+            best_fit_vol=best_fit_vol_subq,
+        )
         .select_related("issuer_name", "start_location_name__system", "aasubsidy_meta")
         .order_by("-date_issued")
         .values(
@@ -233,9 +277,75 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
             "aasubsidy_meta__reason", "aasubsidy_meta__paid",
             "aasubsidy_meta__forced_fitting_id",
             "min_basis", "suggested_subsidy",
+            "best_fit_id", "best_fit_name", "best_fit_vol",
         )
         .distinct()
     )
+    qs = list(qs_list)
+
+    # Pre-calculate issuer display names
+    issuer_names = [c["issuer_name__name"] for c in qs]
+    display_name_map = _bulk_display_issuer_names(issuer_names)
+
+    # Pre-calculate forced fit names
+    forced_fit_ids = {c["aasubsidy_meta__forced_fitting_id"] for c in qs if c["aasubsidy_meta__forced_fitting_id"]}
+    forced_fit_names = {f["pk"]: f["name"] for f in Fitting.objects.filter(pk__in=forced_fit_ids).values("pk", "name")}
+
+    # Pre-calculate all requested fits subsidy info to avoid qfit in loop
+    requested_fit_ids = set(FittingRequest.objects.values_list("fitting_id", flat=True))
+    all_requested_fits_info = {}
+    if requested_fit_ids:
+        # We need a new fi_for_fit that doesn't use the same OuterRef if we're in a different context,
+        # but here we can just reuse the logic.
+        fits_with_info = Fitting.objects.filter(pk__in=requested_fit_ids).annotate(
+            basis_total=fit_basis_total, 
+            total_vol=fit_total_vol
+        ).annotate(
+            suggested=fit_suggested
+        ).values("pk", "basis_total", "total_vol", "suggested")
+        for f in fits_with_info:
+            all_requested_fits_info[f["pk"]] = f
+
+    # Matching fits for doctrine_html
+    # To avoid N+1, we'll fetch all items and do it in Python
+    contract_pks = [c["pk"] for c in qs]
+    all_contract_items = CorporateContractItem.objects.filter(
+        contract_id__in=contract_pks, is_included=True
+    ).values("contract_id", "type_name_id", "quantity")
+    
+    contract_items_map = {}
+    for item in all_contract_items:
+        cid = item["contract_id"]
+        if cid not in contract_items_map:
+            contract_items_map[cid] = {}
+        contract_items_map[cid][item["type_name_id"]] = contract_items_map[cid].get(item["type_name_id"], 0) + item["quantity"]
+        
+    all_fittings = Fitting.objects.all().values("pk", "name", "ship_type_type_id")
+    all_fitting_items = FittingItem.objects.all().values("fit_id", "type_id", "quantity")
+    fit_items_map = {}
+    for item in all_fitting_items:
+        fid = item["fit_id"]
+        if fid not in fit_items_map:
+            fit_items_map[fid] = {}
+        fit_items_map[fid][item["type_id"]] = item["quantity"]
+        
+    def get_matches(contract_pk):
+        c_items = contract_items_map.get(contract_pk, {})
+        matches = []
+        for f in all_fittings:
+            f_items = fit_items_map.get(f["pk"], {})
+            # Check hull
+            if c_items.get(f["ship_type_type_id"], 0) < 1:
+                continue
+            # Check items
+            possible = True
+            for t_id, qty in f_items.items():
+                if c_items.get(t_id, 0) < qty:
+                    possible = False
+                    break
+            if possible:
+                matches.append(f)
+        return sorted(matches, key=lambda x: x["name"])
 
     rows = []
     for c in qs:
@@ -246,148 +356,25 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
 
         forced_id = c.get("aasubsidy_meta__forced_fitting_id") or None
         if forced_id:
-            fit_name = Fitting.objects.filter(pk=forced_id).values_list("name", flat=True).first() or "Forced Doctrine"
+            fit_name = forced_fit_names.get(forced_id) or "Forced Doctrine"
             doctrine_html = fit_name + " (forced)"
             matched_fit_id = forced_id
         else:
-            names = _matched_fit_names_for_contract(c["pk"])
-            doctrine_html = "<br>".join(names) if names else ""
-            if names:
-                matched_fit = (
-                    Fitting.objects
-                    .annotate(fit_id=F("pk"))
-                    .annotate(has_missing=Exists(
-                        FittingItem.objects
-                        .filter(fit_id=OuterRef("fit_id"))
-                        .annotate(have_qty=Coalesce(Subquery(
-                            CorporateContractItem.objects
-                            .filter(contract_id=c["pk"], type_name_id=OuterRef("type_id"), is_included=True)
-                            .values("type_name_id").annotate(q=Sum("quantity")).values("q")
-                        ), Value(0)))
-                        .filter(have_qty__lt=F("quantity"))
-                    ))
-                    .filter(has_missing=False)
-                    .order_by("pk")
-                    .values_list("pk", flat=True)[:1]
-                )
-                matched_fit = list(matched_fit)
-                matched_fit_id = matched_fit[0] if matched_fit else None
-            else:
-                matched_fit_id = None
+            matches = get_matches(c["pk"])
+            doctrine_html = "<br>".join([m["name"] for m in matches])
+            matched_fit_id = c.get("best_fit_id")
 
         jita_sell_isk = 0.0
         total_vol = 0.0
         suggested = float(c.get("suggested_subsidy") or 0.0)
 
-        if matched_fit_id is not None:
-            fi = FittingItem.objects.filter(fit_id=OuterRef("pk")).values("fit_id")
-            items_sell = (
-                fi.annotate(
-                    line_sell=Coalesce(
-                        F("quantity")
-                        * Coalesce(
-                            Subquery(
-                                SubsidyItemPrice.objects.filter(eve_type_id=OuterRef("type_id")).values(price_field)[:1],
-                                output_field=DEC_2,
-                            ),
-                            Value(Decimal("0"), output_field=DEC_2),
-                        ),
-                        Value(Decimal("0"), output_field=DEC_2),
-                    )
-                )
-                .values("fit_id")
-                .annotate(total=Sum("line_sell", output_field=DEC_2))
-                .values("total")
-            )
-            items_volume = (
-                fi.annotate(
-                    line_vol=Coalesce(
-                        F("quantity")
-                        * Coalesce(
-                            Subquery(
-                                EveType.objects.filter(id=OuterRef("type_id"))
-                                .annotate(eff_vol=Coalesce(F("packaged_volume"), F("volume")))
-                                .values("eff_vol")[:1],
-                                output_field=DEC_4,
-                            ),
-                            Value(Decimal("0"), output_field=DEC_4),
-                        ),
-                        Value(Decimal("0"), output_field=DEC_4),
-                    )
-                )
-                .values("fit_id")
-                .annotate(total=Sum("line_vol", output_field=DEC_4))
-                .values("total")
-            )
-            ship_sell = Subquery(
-                SubsidyItemPrice.objects.filter(eve_type_id=OuterRef("ship_type_type_id")).values(price_field)[:1],
-                output_field=DEC_2,
-            )
-            ship_vol = Subquery(
-                EveType.objects.filter(id=OuterRef("ship_type_type_id"))
-                .annotate(eff_vol=Coalesce(F("packaged_volume"), F("volume")))
-                .values("eff_vol")[:1],
-                output_field=DEC_4,
-            )
-            qfit = (
-                Fitting.objects
-                .filter(pk=matched_fit_id)
-                .annotate(has_req=Exists(FittingRequest.objects.filter(fitting_id=OuterRef("pk"))))
-                .filter(has_req=True)
-                .annotate(
-                    items_sell_isk_raw=Coalesce(Subquery(items_sell, output_field=DEC_2), Value(Decimal("0"), output_field=DEC_2)),
-                    items_volume_m3=Coalesce(Subquery(items_volume, output_field=DEC_4), Value(Decimal("0"), output_field=DEC_4)),
-                    ship_sell_isk_raw=Coalesce(ship_sell, Value(Decimal("0"), output_field=DEC_2)),
-                    ship_volume_m3=Coalesce(ship_vol, Value(Decimal("0"), output_field=DEC_4)),
-                )
-                .annotate(
-                    items_sell_isk=ExpressionWrapper(
-                        Ceil(ExpressionWrapper(F("items_sell_isk_raw") / Value(safe_incr_val, output_field=DEC_2), output_field=DEC_2), output_field=DEC_0)
-                        * Value(safe_incr_val, output_field=DEC_2),
-                        output_field=DEC_2,
-                    ),
-                    ship_sell_isk=ExpressionWrapper(
-                        Ceil(ExpressionWrapper(F("ship_sell_isk_raw") / Value(safe_incr_val, output_field=DEC_2), output_field=DEC_2), output_field=DEC_0)
-                        * Value(safe_incr_val, output_field=DEC_2),
-                        output_field=DEC_2,
-                    ),
-                )
-                .annotate(
-                    jita_sell_isk=ExpressionWrapper(F("items_sell_isk") + F("ship_sell_isk"), output_field=DEC_2),
-                    total_vol=ExpressionWrapper(F("items_volume_m3") + F("ship_volume_m3"), output_field=DEC_4),
-                )
-                .annotate(
-                    subsidy_isk=ExpressionWrapper(
-                        Ceil(
-                            ExpressionWrapper(
-                                Round(
-                                    ExpressionWrapper(
-                                        (F("jita_sell_isk") * Value(cfg["pct"], output_field=DEC_2))
-                                        + (F("total_vol") * Value(cfg["m3"], output_field=DEC_2)),
-                                        output_field=DEC_2,
-                                    ),
-                                    Value(2),
-                                    output_field=DEC_2,
-                                )
-                                / Value(safe_incr_val, output_field=DEC_2),
-                                output_field=DEC_2,
-                            ),
-                            output_field=DEC_0,
-                        )
-                        * Value(safe_incr_val, output_field=DEC_2),
-                        output_field=DEC_2,
-                    )
-                )
-                .values("jita_sell_isk", "total_vol", "subsidy_isk")[:1]
-            )
-            qfit_row = list(qfit)
-            if qfit_row:
-                jita_sell_isk = float(qfit_row[0]["jita_sell_isk"] or 0.0)
-                suggested = float(qfit_row[0]["subsidy_isk"] or 0.0)
+        if matched_fit_id is not None and matched_fit_id in requested_fit_ids:
+            fit_info = all_requested_fits_info.get(matched_fit_id)
+            if fit_info:
+                jita_sell_isk = float(fit_info["basis_total"] or 0.0)
+                suggested = float(fit_info["suggested"] or 0.0)
+                total_vol = float(fit_info["total_vol"] or 0.0)
                 pct_jita = round(((jita_sell_isk / contract_price) * 100), 2) if contract_price else 0.0
-            else:
-                suggested = 0.0
-                pct_jita = 0.0
 
         prefill_subsidy = float(c["aasubsidy_meta__subsidy_amount"] or 0.0) or suggested
         station_val = (
@@ -396,7 +383,7 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
             "Unknown"
         )
 
-        issuer_display = _display_issuer_name(c["issuer_name__name"])
+        issuer_display = display_name_map.get(c["issuer_name__name"], c["issuer_name__name"])
         rows.append({
             "id": c["contract_id"],
             "issuer": issuer_display,
