@@ -364,8 +364,8 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
             doctrine_html = "<br>".join([m["name"] for m in matches])
             matched_fit_id = c.get("best_fit_id")
 
-        jita_sell_isk = 0.0
-        total_vol = 0.0
+        jita_sell_isk = 0.00
+        total_vol = 0.00
         suggested = float(c.get("suggested_subsidy") or 0.0)
 
         if matched_fit_id is not None and matched_fit_id in requested_fit_ids:
