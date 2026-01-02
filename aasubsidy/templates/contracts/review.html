@@ -273,18 +273,26 @@
     });
 
     // Handle accordion toggle and item loading
-    document.querySelectorAll('.contract-row td:nth-child(6)').forEach(td => {
-      td.style.cursor = 'pointer';
-      td.addEventListener('click', function(e) {
-        // Don't toggle if clicking on interactive elements within the cell (if any)
-        if (e.target.closest('button') || e.target.closest('select') || e.target.closest('input') || e.target.closest('.copyable')) {
+    document.querySelectorAll('.contract-row').forEach(row => {
+      row.addEventListener('click', function(e) {
+        // Don't toggle if clicking on interactive elements
+        if (e.target.closest('button') || 
+            e.target.closest('select') || 
+            e.target.closest('input') || 
+            e.target.closest('.copyable') ||
+            e.target.closest('.force-fit-container') ||
+            e.target.closest('.doctrine-display')
+        ) {
           return;
         }
 
-        const row = this.closest('.contract-row');
-        const id = row.getAttribute('data-id');
+        const id = this.getAttribute('data-id');
         const detailRow = document.getElementById(`details-${id}`);
+        if (!detailRow) return;
+
         const isOpening = !detailRow.classList.contains('show');
+        const bootstrap = window.bootstrap;
+        if (!bootstrap || !bootstrap.Collapse) return;
 
         // Close all other open details
         document.querySelectorAll('.detail-row.show').forEach(el => {
@@ -338,7 +346,8 @@
     // Toast helper
     let toastInst;
     function showToast() {
-      if (!window.bootstrap) return;
+      const bootstrap = window.bootstrap;
+      if (!bootstrap || !bootstrap.Toast) return;
       const el = document.getElementById('copyToast');
       if (!el) return;
       toastInst = toastInst || new bootstrap.Toast(el, { delay: 1500 });
@@ -523,7 +532,8 @@
           const label = document.getElementById('approvalModalLabel');
           if (label) label.textContent = action === 'deny' ? "{% trans 'Deny with Reason' %}" : "{% trans 'Approve with Comment' %}";
           const modalEl = document.getElementById('approvalModal');
-          const modal = modalEl ? new bootstrap.Modal(modalEl) : null;
+          const bootstrap = window.bootstrap;
+          const modal = (modalEl && bootstrap && bootstrap.Modal) ? new bootstrap.Modal(modalEl) : null;
           modal && modal.show();
         }
       }
