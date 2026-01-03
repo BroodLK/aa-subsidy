@@ -1,6 +1,11 @@
 {% extends 'contracts/base.html' %}
 {% load i18n humanize static %}
 
+{% block extra_css %}
+    {{ block.super }}
+    <link rel="stylesheet" href="{% static 'aasubsidy/css/review.css' %}">
+{% endblock %}
+
 {% block details %}
 <div class="container-xxl py-3">
   <div id="loadingOverlay" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; z-index:2000;">
@@ -236,15 +241,6 @@
   </div>
 </div>
 
-<style>
-  .container-xxl { max-width: 100%; }
-  .copyable { cursor: pointer; }
-  th[data-col] { cursor: pointer; }
-  .contract-row { cursor: pointer; }
-  .detail-row { display: none; }
-  .detail-row.show { display: table-row; }
-  .detail-row.collapsing { display: table-row; }
-</style>
 <script>
     window.AASubsidyConfig = {
         contractItemsUrl: "{% url 'aasubsidy:contract_items' 0 %}",

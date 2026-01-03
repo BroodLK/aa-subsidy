@@ -1,6 +1,10 @@
 {% extends 'allianceauth/base-bs5.html' %}
 
-{% load i18n %}
+{% load i18n static %}
+
+{% block extra_css %}
+    <link rel="stylesheet" href="{% static 'aasubsidy/css/aasubsidy.css' %}">
+{% endblock %}
 
 {% block page_title %}
 {% translate "Subsidy" %}

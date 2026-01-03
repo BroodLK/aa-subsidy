@@ -1,0 +1,4 @@
+.contract-row { cursor: pointer; }
+.detail-row { display: none; }
+.detail-row.show { display: table-row !important; }
+.detail-row.collapsing { display: table-row; }
