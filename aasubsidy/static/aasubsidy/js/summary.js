@@ -29,6 +29,8 @@
     const fitIdEl = document.getElementById('claimFitId');
     const fitNameEl = document.getElementById('claimFitName');
     const hintEl = document.getElementById('claimHint');
+    const adminClaimantsSection = document.getElementById('adminClaimantsList');
+    const claimantsContainer = document.getElementById('claimantsListContainer');
     const errorEl = document.getElementById('claimError');
     const clearBtn = document.getElementById('clearClaimBtn');
     let modal;
@@ -42,6 +44,8 @@
         const claimedMe = parseInt(link.getAttribute('data-claimed-me') || '0', 10);
         const claimedTotal = parseInt(link.getAttribute('data-claimed-total') || '0', 10);
         const claimants = (link.getAttribute('data-claimants') || '').trim();
+        const claimantsRaw = (link.getAttribute('data-claimants-raw') || '').trim();
+
         if (clearBtn) {
           clearBtn.classList.toggle('d-none', !(claimedMe > 0));
         }
@@ -52,6 +56,29 @@
         fitNameEl.innerHTML = `<span class="text-muted">${fitName}</span>`;
 
         hintEl.innerHTML = `· Needed: <b>${needed.toLocaleString()}</b><br> · Available: <b>${available.toLocaleString()}</b><br> · Claimed (all): <b>${claimedTotal.toLocaleString()}</b><br> · Claimed by You: <b>${claimedMe.toLocaleString()}</b><br> · Claimed by: <b>${claimants}</b>`;
+        
+        if (window.AASubsidyConfig.isAdmin && adminClaimantsSection && claimantsContainer) {
+            claimantsContainer.innerHTML = '';
+            if (claimantsRaw) {
+                adminClaimantsSection.classList.remove('d-none');
+                const parts = claimantsRaw.split('|');
+                parts.forEach(p => {
+                    const [uid, name, qty] = p.split(':');
+                    const li = document.createElement('div');
+                    li.className = 'list-group-item d-flex justify-content-between align-items-center bg-transparent border-secondary text-light px-0';
+                    li.innerHTML = `
+                        <span>${name} (${qty})</span>
+                        <button type="button" class="btn btn-sm btn-outline-danger admin-clear-btn" data-user-id="${uid}">
+                            <i class="fa fa-trash"></i>
+                        </button>
+                    `;
+                    claimantsContainer.appendChild(li);
+                });
+            } else {
+                adminClaimantsSection.classList.add('d-none');
+            }
+        }
+
         errorEl.style.display = 'none';
         errorEl.textContent = '';
 
@@ -61,6 +88,33 @@
     });
 
     document.addEventListener('click', async (e) => {
+        const adminClearBtn = e.target.closest('.admin-clear-btn');
+        if (adminClearBtn) {
+            const userId = adminClearBtn.getAttribute('data-user-id');
+            const fitId = fitIdEl.value;
+            if (!userId || !fitId) return;
+            if (!confirm('Are you sure you want to clear this claim?')) return;
+            
+            try {
+                showLoading();
+                const resp = await fetch(window.AASubsidyConfig.deleteClaimUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': getCookie('csrftoken'),
+                    },
+                    body: JSON.stringify({ fit_id: parseInt(fitId, 10), user_id: parseInt(userId, 10) }),
+                    credentials: 'same-origin',
+                });
+                const data = await resp.json();
+                if (!resp.ok || !data.ok) throw new Error(data.error || 'Failed to clear claim');
+                window.location.reload();
+            } catch (err) {
+                errorEl.textContent = err.message || 'Error clearing claim.';
+                errorEl.style.display = 'block';
+                hideLoading();
+            }
+        }
       const copyEl = e.target.closest('.copyable');
       if (copyEl) {
         const txt = copyEl.getAttribute('data-copy') || copyEl.textContent || '';

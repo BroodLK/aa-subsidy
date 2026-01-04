@@ -23,6 +23,7 @@
                         <th>{% trans "Stock Requested" %}</th>
                         <th>{% trans "Stock Available" %}</th>
                         <th>{% trans "Stock Needed" %}</th>
+                        <th>{% trans "Your Claims" %}</th>
                         <th>{% trans "Volume (m3)" %}</th>
                         <th>{% trans "Jita Sell (ISK)" %}</th>
                         <th>{% trans "Subsidy Amount (ISK)" %}</th>
@@ -54,6 +55,7 @@
                                        data-claimed-total="{{ r.claimed_total }}"
                                        data-claimed-me="{{ r.claimed_by_me }}"
                                        data-claimants="{% if r.claimants %}{{ r.claimants }}{% endif %}"
+                                       data-claimants-raw="{{ r.claimants_raw }}"
                                        data-bs-html="true"
                                        data-bs-placement="top"
                                        title=""
@@ -67,6 +69,9 @@
                                     <span class="text-muted">{{ adj|intcomma }}</span>
                                 {% endif %}
                             {% endwith %}
+                        </td>
+                        <td class="text-end {% if r.claimed_by_me > 0 %}text-warning fw-bold{% else %}text-muted{% endif %}">
+                            {{ r.claimed_by_me|intcomma }}
                         </td>
                         <td class="text-end">{{ r.volume_m3|intcomma }}</td>
                         <td class="text-end">
@@ -90,6 +95,7 @@
                         <th class="text-end">{{ system.totals.requested|intcomma }}</th>
                         <th class="text-end">{{ system.totals.available|intcomma }}</th>
                         <th class="text-end">{{ system.totals.needed|intcomma }}</th>
+                        <th></th>
                         <th colspan="4"></th>
                       </tr>
                     </tfoot>
@@ -119,6 +125,15 @@
         <input type="number" min="0" step="1" class="form-control" id="claimQty" required>
         <input type="hidden" id="claimFitId">
         <div class="form-text" id="claimHint"></div>
+
+        {% if is_admin %}
+        <div id="adminClaimantsList" class="mt-3 d-none">
+            <hr>
+            <h6>{% trans "Manage All Claims" %}</h6>
+            <div id="claimantsListContainer" class="list-group list-group-flush"></div>
+        </div>
+        {% endif %}
+
         <div class="invalid-feedback d-block" id="claimError" style="display:none;"></div>
       </div>
       <div class="modal-footer">
@@ -145,7 +160,8 @@
 <script>
     window.AASubsidyConfig = {
         deleteClaimUrl: "{% url 'aasubsidy:delete_claim' %}",
-        saveClaimUrl: "{% url 'aasubsidy:save_claim' %}"
+        saveClaimUrl: "{% url 'aasubsidy:save_claim' %}",
+        isAdmin: {{ is_admin|yesno:"true,false" }}
     };
 </script>
 <script src="{% static 'aasubsidy/js/summary.js' %}"></script>

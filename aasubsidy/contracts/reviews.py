@@ -139,37 +139,6 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
         corporation_id=corporation_id if corporation_id is not None else F("corporation_id"),
     )
 
-    ci_qty = (
-        CorporateContractItem.objects
-        .filter(contract_id=OuterRef("pk"), type_name_id=OuterRef("type_id"), is_included=True)
-        .values("type_name_id")
-        .annotate(q=Sum("quantity"))
-        .values("q")
-    )
-    missing_item = (
-        FittingItem.objects
-        .filter(fit_id=OuterRef("fit_id"))
-        .annotate(have_qty=Coalesce(Subquery(ci_qty), Value(0)))
-        .filter(have_qty__lt=F("quantity"))
-    )
-
-    # Check if hull is present
-    ci_for_hull_subq = (
-        CorporateContractItem.objects.filter(contract_id=OuterRef("pk"), type_name_id=OuterRef("ship_type_type_id"), is_included=True)
-        .values("type_name_id")
-        .annotate(q=Sum("quantity"))
-        .values("q")
-    )
-    hull_check_subq = Coalesce(Subquery(ci_for_hull_subq), Value(0))
-
-    matching_fit_ids = (
-        Fitting.objects
-        .annotate(fit_id=F("pk"), hull_qty=hull_check_subq)
-        .annotate(has_missing=Exists(missing_item))
-        .filter(has_missing=False, hull_qty__gte=1)
-        .values("pk")
-    )
-
     fi_for_fit = FittingItem.objects.filter(fit_id=OuterRef("pk")).values("fit_id")
 
     items_basis_fit = (
@@ -244,30 +213,8 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
         output_field=DEC_2,
     )
 
-    per_contract_fit_calc = (
-        Fitting.objects
-        .filter(pk__in=Subquery(matching_fit_ids))
-        .annotate(basis_total=fit_basis_total, total_vol=fit_total_vol)
-        .annotate(suggested=fit_suggested)
-        .values("pk", "basis_total", "suggested", "name", "total_vol")
-        .order_by("basis_total")
-    )
-
-    min_basis_subq = Subquery(per_contract_fit_calc.values("basis_total")[:1], output_field=DEC_2)
-    suggested_subq = Subquery(per_contract_fit_calc.values("suggested")[:1], output_field=DEC_2)
-    best_fit_id_subq = Subquery(per_contract_fit_calc.values("pk")[:1])
-    best_fit_name_subq = Subquery(per_contract_fit_calc.values("name")[:1])
-    best_fit_vol_subq = Subquery(per_contract_fit_calc.values("total_vol")[:1], output_field=DEC_4)
-
     qs_list = (
         base_contracts
-        .annotate(
-            min_basis=min_basis_subq, 
-            suggested_subsidy=suggested_subq,
-            best_fit_id=best_fit_id_subq,
-            best_fit_name=best_fit_name_subq,
-            best_fit_vol=best_fit_vol_subq,
-        )
         .select_related("issuer_name", "start_location_name__system", "aasubsidy_meta")
         .order_by("-date_issued")
         .values(
@@ -276,8 +223,6 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
             "aasubsidy_meta__review_status", "aasubsidy_meta__subsidy_amount",
             "aasubsidy_meta__reason", "aasubsidy_meta__paid",
             "aasubsidy_meta__forced_fitting_id",
-            "min_basis", "suggested_subsidy",
-            "best_fit_id", "best_fit_name", "best_fit_vol",
         )
         .distinct()
     )
@@ -291,20 +236,15 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
     forced_fit_ids = {c["aasubsidy_meta__forced_fitting_id"] for c in qs if c["aasubsidy_meta__forced_fitting_id"]}
     forced_fit_names = {f["pk"]: f["name"] for f in Fitting.objects.filter(pk__in=forced_fit_ids).values("pk", "name")}
 
-    # Pre-calculate all requested fits subsidy info to avoid qfit in loop
-    requested_fit_ids = set(FittingRequest.objects.values_list("fitting_id", flat=True))
-    all_requested_fits_info = {}
-    if requested_fit_ids:
-        # We need a new fi_for_fit that doesn't use the same OuterRef if we're in a different context,
-        # but here we can just reuse the logic.
-        fits_with_info = Fitting.objects.filter(pk__in=requested_fit_ids).annotate(
-            basis_total=fit_basis_total, 
-            total_vol=fit_total_vol
-        ).annotate(
-            suggested=fit_suggested
-        ).values("pk", "basis_total", "total_vol", "suggested")
-        for f in fits_with_info:
-            all_requested_fits_info[f["pk"]] = f
+    # All fittings with annotated pricing/volume info
+    all_fittings_info_qs = (
+        Fitting.objects
+        .annotate(basis_total=fit_basis_total, total_vol=fit_total_vol)
+        .annotate(suggested=fit_suggested)
+        .values("pk", "name", "basis_total", "total_vol", "suggested", "ship_type_type_id")
+    )
+    all_fittings_info = {f["pk"]: f for f in all_fittings_info_qs}
+    all_fittings = list(all_fittings_info.values())
 
     # Matching fits for doctrine_html
     # To avoid N+1, we'll fetch all items and do it in Python
@@ -320,7 +260,6 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
             contract_items_map[cid] = {}
         contract_items_map[cid][item["type_name_id"]] = contract_items_map[cid].get(item["type_name_id"], 0) + item["quantity"]
         
-    all_fittings = Fitting.objects.all().values("pk", "name", "ship_type_type_id")
     all_fitting_items = FittingItem.objects.all().values("fit_id", "type_id", "quantity")
     fit_items_map = {}
     for item in all_fitting_items:
@@ -349,33 +288,33 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
 
     rows = []
     for c in qs:
-        basis_val = float(c["min_basis"] or 0.0)
         contract_price = float(c["price"] or 0.0)
-        pct_jita = round((contract_price / basis_val) * 100, 2) if basis_val else 0.0
         review_status = {1: "Approved", -1: "Rejected"}.get(c["aasubsidy_meta__review_status"], "Pending")
 
         forced_id = c.get("aasubsidy_meta__forced_fitting_id") or None
+        matches = get_matches(c["pk"])
+        
         if forced_id:
             fit_name = forced_fit_names.get(forced_id) or "Forced Doctrine"
             doctrine_html = fit_name + " (forced)"
             matched_fit_id = forced_id
         else:
-            matches = get_matches(c["pk"])
             doctrine_html = "<br>".join([m["name"] for m in matches])
-            matched_fit_id = c.get("best_fit_id")
+            if matches:
+                # Pick the cheapest match as the primary basis
+                best_match = min(matches, key=lambda m: float(m["basis_total"] or 0))
+                matched_fit_id = best_match["pk"]
+            else:
+                matched_fit_id = None
 
-        jita_sell_isk = 0.00
-        total_vol = 0.00
-        suggested = float(c.get("suggested_subsidy") or 0.0)
+        basis_val = 0.0
+        suggested = 0.0
+        if matched_fit_id and matched_fit_id in all_fittings_info:
+            info = all_fittings_info[matched_fit_id]
+            basis_val = float(info["basis_total"] or 0.0)
+            suggested = float(info["suggested"] or 0.0)
 
-        if matched_fit_id is not None and matched_fit_id in requested_fit_ids:
-            fit_info = all_requested_fits_info.get(matched_fit_id)
-            if fit_info:
-                jita_sell_isk = float(fit_info["basis_total"] or 0.0)
-                suggested = float(fit_info["suggested"] or 0.0)
-                total_vol = float(fit_info["total_vol"] or 0.0)
-                pct_jita = round(((jita_sell_isk / contract_price) * 100), 2) if contract_price else 0.0
-
+        pct_jita = round((contract_price / basis_val) * 100, 2) if (basis_val > 0 and contract_price > 0) else 0.0
         prefill_subsidy = float(c["aasubsidy_meta__subsidy_amount"] or 0.0) or suggested
         station_val = (
             c["start_location_name__location_name"] or

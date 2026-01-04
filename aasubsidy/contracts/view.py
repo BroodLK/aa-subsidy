@@ -13,6 +13,7 @@ from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.cache import never_cache
 from django.views.generic import TemplateView
 from django.db.models import Sum
 
@@ -67,14 +68,24 @@ class DeleteClaimView(PermissionRequiredMixin, View):
         if fit_id <= 0:
             return JsonResponse({"ok": False, "error": "invalid_params"}, status=400)
 
-        deleted, _ = FittingClaim.objects.filter(fitting_id=fit_id, user=request.user).delete()
+        target_user = request.user
+        request_user_id = data.get("user_id")
+        if request_user_id and (request.user.is_superuser or request.user.has_perm("aasubsidy.subsidy_admin")):
+            from django.contrib.auth.models import User
+            target_user = get_object_or_404(User, pk=request_user_id)
+
+        deleted, _ = FittingClaim.objects.filter(fitting_id=fit_id, user=target_user).delete()
 
         if deleted:
-            messages.success(request, "Your claim was cleared.")
+            if target_user == request.user:
+                messages.success(request, "Your claim was cleared.")
+            else:
+                messages.success(request, f"Claim for {target_user} was cleared.")
             return JsonResponse({"ok": True, "fit_id": fit_id, "deleted": True})
         else:
             return JsonResponse({"ok": True, "fit_id": fit_id, "deleted": False})
 
+@method_decorator(never_cache, name="dispatch")
 class MainView(PermissionRequiredMixin, TemplateView):
     template_name = "contracts/summary.html"
     permission_required = "aasubsidy.basic_access"
@@ -84,17 +95,12 @@ class MainView(PermissionRequiredMixin, TemplateView):
         end = timezone.now()
         start = end - timedelta(days=3000)
 
-        try:
-            from ..contracts import summaries as summaries_mod
-            summaries_mod.doctrine_stock_summary.request_user_id = (
-                self.request.user.id if self.request.user.is_authenticated else None
-            )
-        except Exception:
-            pass
-
-        systems = doctrine_stock_summary(start, end)
+        systems = doctrine_stock_summary(
+            start, end, request_user_id=self.request.user.id if self.request.user.is_authenticated else None
+        )
         
         ctx["systems"] = systems
+        ctx["is_admin"] = self.request.user.is_superuser or self.request.user.has_perm("aasubsidy.subsidy_admin")
         ctx["overall_totals"] = {
             "requested": sum(s["totals"]["requested"] for s in systems),
             "available": sum(s["totals"]["available"] for s in systems),
