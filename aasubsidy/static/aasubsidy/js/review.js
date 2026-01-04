@@ -21,7 +21,7 @@
         const price = parseFloat(pctTd.getAttribute('data-price') || '0') || 0;
         const basis = parseFloat(pctTd.getAttribute('data-basis') || '0') || 0;
         if (price > 0 && basis > 0) {
-          const pct = ((basis / price) * 100);
+          const pct = ((price / basis) * 100);
           pctTd.textContent = pct.toFixed(2) + '%';
           pctTd.setAttribute('data-val', pct.toFixed(2));
         }
