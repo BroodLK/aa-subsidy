@@ -213,6 +213,93 @@
       const m = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
       return m ? decodeURIComponent(m[2]) : '';
     }
+    // Sorting logic
+    const STORAGE_KEY = 'aasubsidy_summary_table_state';
+    const serverPref = window.AASubsidyConfig.tablePref;
+    const state = serverPref ? { sort: { idx: serverPref.sort_idx, dir: serverPref.sort_dir } } : JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+
+    const savePrefToServer = () => {
+      if (!window.AASubsidyConfig.isAuthenticated) return;
+      try {
+        fetch(window.AASubsidyConfig.saveTablePrefUrl, {
+          method: "POST",
+          headers: {
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCookie('csrftoken')
+          },
+          body: JSON.stringify({
+              table_key: "summary",
+              sort_idx: state.sort?.idx || 0,
+              sort_dir: state.sort?.dir || 'desc'
+          })
+        }).catch(() => {});
+      } catch (e) {}
+    };
+
+    const getCellValue = (tr, idx) => {
+      const td = tr.cells[idx];
+      if (!td) return '';
+      const v = (td.getAttribute('data-val') || td.textContent || '').trim();
+      if (!v) return '';
+      const n = Number(v.replace(/[, ]/g, ''));
+      return isNaN(n) ? v.toLowerCase() : n;
+    };
+
+    const sortBy = (idx, dir) => {
+      const container = document.querySelector('.allianceauth-subsidy-plugin');
+      const tables = container ? container.querySelectorAll('table.table-bordered') : document.querySelectorAll('table.table-bordered');
+      
+      tables.forEach(table => {
+          if (!table.tBodies || !table.tBodies[0]) return;
+          const tbody = table.tBodies[0];
+          const rows = Array.from(tbody.rows);
+          if (rows.length <= 1) {
+              const firstCell = rows[0] ? rows[0].cells[0] : null;
+              if (firstCell && firstCell.classList.contains('text-muted')) return;
+          }
+
+          rows.sort((a, b) => {
+            const A = getCellValue(a, idx);
+            const B = getCellValue(b, idx);
+            if (A === B) return 0;
+            if (A < B) return dir === 'asc' ? -1 : 1;
+            return dir === 'asc' ? 1 : -1;
+          });
+          
+          const fragment = document.createDocumentFragment();
+          rows.forEach(r => fragment.appendChild(r));
+          tbody.appendChild(fragment);
+
+          table.querySelectorAll('thead th').forEach(th => {
+              th.classList.remove('sorting-asc', 'sorting-desc');
+              if (th.cellIndex === idx) {
+                  th.classList.add(dir === 'asc' ? 'sorting-asc' : 'sorting-desc');
+              }
+          });
+      });
+      state.sort = { idx, dir };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      savePrefToServer();
+    };
+
+    const container = document.querySelector('.allianceauth-subsidy-plugin');
+    const headers = container ? container.querySelectorAll('table.table-bordered thead th') : document.querySelectorAll('table.table-bordered thead th');
+    
+    headers.forEach((th) => {
+      if (!th.getAttribute('data-col')) return;
+      th.addEventListener('click', () => {
+        const i = th.cellIndex;
+        const current = state.sort || {};
+        const dir = (current.idx === i && current.dir === 'asc') ? 'desc' : 'asc';
+        sortBy(i, dir);
+      });
+    });
+
+    if (state.sort && Number.isInteger(state.sort.idx)) {
+      sortBy(state.sort.idx, state.sort.dir || 'asc');
+    }
+
     hideLoading();
   });
 })();

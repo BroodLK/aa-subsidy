@@ -109,7 +109,7 @@ class MainView(PermissionRequiredMixin, TemplateView):
 
         if self.request.user.is_authenticated:
             pref = UserTablePreference.objects.filter(
-                user=self.request.user, table_key="contracts"
+                user=self.request.user, table_key="summary"
             ).first()
             if pref:
                 ctx["table_pref"] = {
@@ -374,6 +374,8 @@ class SaveTablePreferenceView(PermissionRequiredMixin, View):
         except Exception:
             payload = {}
 
+        table_key = str(payload.get("table_key") or "contracts")[:100]
+
         try:
             sort_idx = int(payload.get("sort_idx") or 0)
         except Exception:
@@ -390,7 +392,7 @@ class SaveTablePreferenceView(PermissionRequiredMixin, View):
             filters_str = "{}"
 
         pref, _ = UserTablePreference.objects.get_or_create(
-            user=request.user, table_key="contracts"
+            user=request.user, table_key=table_key
         )
         pref.sort_idx = sort_idx
         pref.sort_dir = sort_dir

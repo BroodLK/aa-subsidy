@@ -77,22 +77,34 @@
     const getCellValue = (tr, idx) => {
       const td = tr.cells[idx];
       if (!td) return '';
-      const v = td.getAttribute('data-val') || td.textContent || '';
-      const n = Number(String(v).replace(/[, ]/g, ''));
-      return isNaN(n) ? String(v).toLowerCase() : n;
+      const v = (td.getAttribute('data-val') || td.textContent || '').trim();
+      if (!v) return '';
+      const n = Number(v.replace(/[, ]/g, ''));
+      return isNaN(n) ? v.toLowerCase() : n;
     };
 
     const header = table.tHead.rows[0];
     const sortBy = (idx, dir) => {
-      const rows = Array.from(table.tBodies[0].rows);
+      const tbody = table.tBodies[0];
+      const rows = Array.from(tbody.rows);
       rows.sort((a, b) => {
         const A = getCellValue(a, idx);
         const B = getCellValue(b, idx);
+        if (A === B) return 0;
         if (A < B) return dir === 'asc' ? -1 : 1;
-        if (A > B) return dir === 'asc' ? 1 : -1;
-        return 0;
+        return dir === 'asc' ? 1 : -1;
       });
-      rows.forEach(r => table.tBodies[0].appendChild(r));
+      const fragment = document.createDocumentFragment();
+      rows.forEach(r => fragment.appendChild(r));
+      tbody.appendChild(fragment);
+
+      table.querySelectorAll('thead th').forEach(th => {
+          th.classList.remove('sorting-asc', 'sorting-desc');
+          if (th.cellIndex === idx) {
+              th.classList.add(dir === 'asc' ? 'sorting-asc' : 'sorting-desc');
+          }
+      });
+
       state.sort = { idx, dir };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       savePrefToServer();

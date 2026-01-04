@@ -19,40 +19,40 @@
                 <table class="table table-sm align-middle mb-0 table-bordered">
                     <thead class="table-dark">
                     <tr class="text-center">
-                        <th>{% trans "Doctrine" %}</th>
-                        <th>{% trans "Stock Requested" %}</th>
-                        <th>{% trans "Stock Available" %}</th>
-                        <th>{% trans "Stock Needed" %}</th>
-                        <th>{% trans "Your Claims" %}</th>
-                        <th>{% trans "Volume (m3)" %}</th>
-                        <th>{% trans "Jita Sell (ISK)" %}</th>
-                        <th>{% trans "Subsidy Amount (ISK)" %}</th>
-                        <th>{% trans "Alliance Purchase (ISK)" %}</th>
+                        <th data-col="doctrine">{% trans "Doctrine" %}</th>
+                        <th data-col="fitting_name">{% trans "Fit" %}</th>
+                        <th data-col="stock_requested">{% trans "Stock Requested" %}</th>
+                        <th data-col="stock_available">{% trans "Stock Available" %}</th>
+                        <th data-col="stock_needed">{% trans "Stock Needed" %}</th>
+                        <th data-col="claimed_by_me">{% trans "Your Claims" %}</th>
+                        <th data-col="volume_m3">{% trans "Volume (m3)" %}</th>
+                        <th data-col="jita_sell_isk">{% trans "Jita Sell (ISK)" %}</th>
+                        <th data-col="subsidy_isk">{% trans "Subsidy Amount (ISK)" %}</th>
+                        <th data-col="alliance_purchase_isk">{% trans "Alliance Purchase (ISK)" %}</th>
                     </tr>
                     </thead>
                     <tbody>
                     {% for r in system.rows %}
                     <tr>
-                        <td><a href="/fittings/fit/{{ r.fit_id }}/" target="_blank">{{ r.fitting_name }}</a></td>
-                        <td class="text-end">{{ r.stock_requested|intcomma }}</td>
-                        <td class="text-end
-                            {% if r.stock_available > r.stock_requested %} text-success
-                            {% elif r.stock_available < r.stock_requested %} text-danger
-                            {% else %}{% endif %}">
+                        <td data-val="{{ r.doctrine }}">{{ r.doctrine }}</td>
+                        <td data-val="{{ r.fitting_name }}"><a href="/fittings/fit/{{ r.fit_id }}/" target="_blank">{{ r.fitting_name }}</a></td>
+                        <td class="text-end" data-val="{{ r.stock_requested }}">{{ r.stock_requested|intcomma }}</td>
+                        <td class="text-end {% if r.stock_available > r.stock_requested %}text-success{% elif r.stock_available < r.stock_requested %}text-danger{% endif %}"
+                            data-val="{{ r.stock_available }}">
                             {{ r.stock_available|intcomma }}
                         </td>
-                        <td class="text-end">
+                        <td class="text-end" data-val="{{ r.stock_needed }}">
                             {% with needed=r.stock_needed adj=r.adjusted_needed %}
-                                {% if needed > 0 %}
+                                {% if needed > 0 or r.claimed_total|default:0 > 0 %}
                                     <a href="#"
                                        class="claim-link {% if r.claimed_total|default:0 > 0 %}text-warning{% else %}text-danger{% endif %}"
                                        data-bs-toggle="modal"
                                        data-bs-target="#claimModal"
                                        data-fit-id="{{ r.fit_id }}"
-                                       data-fit-name="{{ r.doctrine }}"
+                                       data-fit-name="{{ r.fitting_name }}"
                                        data-available="{{ r.stock_available }}"
                                        data-needed="{{ needed }}"
-                                       data-claimed-total="{{ r.claimed_total }}"
+                                       data-claimed_total="{{ r.claimed_total }}"
                                        data-claimed-me="{{ r.claimed_by_me }}"
                                        data-claimants="{% if r.claimants %}{{ r.claimants }}{% endif %}"
                                        data-claimants-raw="{{ r.claimants_raw }}"
@@ -61,7 +61,7 @@
                                        title=""
                                        data-bs-original-title=""
                                        data-bs-toggle="tooltip"
-                                       data-bs-title="<div class='fw-semibold mb-1'>{{ r.doctrine }}</div>"
+                                       data-bs-title="<div class='fw-semibold mb-1'>{{ r.fitting_name }}</div>"
                                        data-bs-content="<div>Stock available: <span class='fw-semibold'>{{ r.stock_available|intcomma }}</span></div><div>Stock being brought by you: <span class='fw-semibold'>{{ r.claimed_by_me|intcomma }}</span></div>">
                                         {{ adj|intcomma }}
                                     </a>
@@ -70,33 +70,32 @@
                                 {% endif %}
                             {% endwith %}
                         </td>
-                        <td class="text-end {% if r.claimed_by_me > 0 %}text-warning fw-bold{% else %}text-muted{% endif %}">
+                        <td class="text-end {% if r.claimed_by_me > 0 %}text-warning fw-bold{% else %}text-muted{% endif %}" data-val="{{ r.claimed_by_me }}">
                             {{ r.claimed_by_me|intcomma }}
                         </td>
-                        <td class="text-end">{{ r.volume_m3|intcomma }}</td>
-                        <td class="text-end">
+                        <td class="text-end" data-val="{{ r.volume_m3 }}">{{ r.volume_m3|intcomma }}</td>
+                        <td class="text-end" data-val="{{ r.jita_sell_isk }}">
                             {{ r.jita_sell_isk|intcomma }}
                             <span class="copyable" data-copy="{{ r.jita_sell_isk }}" title="{% trans 'Click to copy' %}">
                                 <i class="fa fa-copy ms-1 text-secondary"></i>
                             </span>
                         </td>
-                        <td class="text-end">{{ r.subsidy_isk|intcomma }}</td>
-                        <td class="text-end">{{ r.alliance_purchase_isk|intcomma }}</td>
+                        <td class="text-end" data-val="{{ r.subsidy_isk }}">{{ r.subsidy_isk|intcomma }}</td>
+                        <td class="text-end" data-val="{{ r.alliance_purchase_isk }}">{{ r.alliance_purchase_isk|intcomma }}</td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="8" class="text-center text-muted">{% trans "No doctrines to display for this system." %}</td>
+                        <td colspan="10" class="text-center text-muted">{% trans "No doctrines to display for this system." %}</td>
                     </tr>
                     {% endfor %}
                     </tbody>
                     <tfoot>
                       <tr class="table-dark">
-                        <th class="text-end">{% trans "Totals" %}</th>
+                        <th colspan="2" class="text-end">{% trans "Totals" %}</th>
                         <th class="text-end">{{ system.totals.requested|intcomma }}</th>
                         <th class="text-end">{{ system.totals.available|intcomma }}</th>
                         <th class="text-end">{{ system.totals.needed|intcomma }}</th>
-                        <th></th>
-                        <th colspan="4"></th>
+                        <th colspan="5"></th>
                       </tr>
                     </tfoot>
                 </table>
@@ -161,6 +160,9 @@
     window.AASubsidyConfig = {
         deleteClaimUrl: "{% url 'aasubsidy:delete_claim' %}",
         saveClaimUrl: "{% url 'aasubsidy:save_claim' %}",
+        saveTablePrefUrl: "{% url 'aasubsidy:save_table_pref' %}",
+        tablePref: {{ table_pref|default:"null"|safe }},
+        isAuthenticated: {{ request.user.is_authenticated|yesno:'true,false' }},
         isAdmin: {{ is_admin|yesno:"true,false" }}
     };
 </script>

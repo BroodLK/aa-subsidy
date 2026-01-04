@@ -19,7 +19,7 @@ from django.db.models import (
 from django.db.models.functions import Coalesce
 
 from eveuniverse.models import EveType
-from fittings.models import Fitting, FittingItem
+from fittings.models import Fitting, FittingItem, Doctrine
 from ..helpers.db import Ceil, Round
 from ..models import (
     FittingClaim,
@@ -372,11 +372,11 @@ def doctrine_stock_summary(
             my_claims_by_fit[mc["fitting_id"]] = int(mc["total"] or 0)
 
     # Map each fitting to its doctrine names for display
-    fit_to_doctrines = {}
-    fittings_for_names = Fitting.objects.prefetch_related("doctrines").only("id")
-    for f in fittings_for_names:
-        names = [d.name for d in f.doctrines.all()]
-        fit_to_doctrines[f.id] = ", ".join(names) if names else ""
+    fit_to_doctrines_list = defaultdict(list)
+    all_doctrines = list(Doctrine.objects.prefetch_related("fittings").all())
+    for d in all_doctrines:
+        for f in d.fittings.all():
+            fit_to_doctrines_list[f.id].append(d)
 
     for system in systems:
         allowed_locations = system_locations.get(system.id)
@@ -400,6 +400,16 @@ def doctrine_stock_summary(
                 continue
 
             system_stock_counts[fit_id] += 1
+
+        # Calculate doctrine-level totals for this system
+        # requested_per_fit[fit_id] = FittingRequest.requested in this system
+        system_fit_reqs = dict(
+            FittingRequest.objects.filter(system=system).values_list("fitting_id", "requested")
+        )
+        doctrine_sum_req = defaultdict(int)
+        for d in all_doctrines:
+            for f in d.fittings.all():
+                doctrine_sum_req[d.id] += system_fit_reqs.get(f.id, 0)
 
         fittings_with_stock = [
             fid for fid, count in system_stock_counts.items() if count > 0
@@ -439,14 +449,23 @@ def doctrine_stock_summary(
             subsidy_isk = _ceil_to_increment(base, incr_val)
             alliance_purchase_isk = _ceil_to_increment(jita_sell + base, incr_val)
 
-            display_name = fit_to_doctrines.get(fit_id)
-            if not display_name:
-                display_name = r["name"]
+            # Pick the best doctrine for this fitting in this system
+            fitting_doctrines = fit_to_doctrines_list.get(fit_id, [])
+            if not fitting_doctrines:
+                best_doctrine_name = "No Doctrine"
+            else:
+                # Sort doctrines by doctrine_sum_req[d.id] desc, then name asc
+                # Convert to list to avoid mutating the original
+                sorted_docs = sorted(
+                    fitting_doctrines,
+                    key=lambda doc: (-doctrine_sum_req[doc.id], doc.name)
+                )
+                best_doctrine_name = sorted_docs[0].name
 
             system_rows.append(
                 {
                     "fit_id": fit_id,
-                    "doctrine": display_name,
+                    "doctrine": best_doctrine_name,
                     "fitting_name": r["name"],
                     "stock_requested": requested,
                     "stock_available": available,

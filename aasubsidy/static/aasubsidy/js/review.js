@@ -177,22 +177,48 @@
     const getCellValue = (tr, idx) => {
       const td = tr.cells[idx];
       if (!td) return '';
-      const v = td.getAttribute('data-val') || td.textContent || '';
-      const n = Number(String(v).replace(/[, %]/g, ''));
-      return isNaN(n) ? String(v).toLowerCase() : n;
+      const v = (td.getAttribute('data-val') || td.textContent || '').trim();
+      if (!v) return '';
+      const n = Number(v.replace(/[, %]/g, ''));
+      return isNaN(n) ? v.toLowerCase() : n;
     };
 
     const header = table.tHead.rows[0];
     const sortBy = (idx, dir) => {
-      const rows = Array.from(table.tBodies[0].rows);
-      rows.sort((a, b) => {
-        const A = getCellValue(a, idx);
-        const B = getCellValue(b, idx);
+      const tbody = table.tBodies[0];
+      const rows = Array.from(tbody.rows);
+      const pairs = [];
+      for (let i = 0; i < rows.length; i++) {
+          if (rows[i].classList.contains('contract-row')) {
+              const mainRow = rows[i];
+              const detailRow = (i + 1 < rows.length && rows[i+1].classList.contains('detail-row')) ? rows[i+1] : null;
+              pairs.push({ main: mainRow, detail: detailRow });
+              if (detailRow) i++;
+          }
+      }
+
+      pairs.sort((a, b) => {
+        const A = getCellValue(a.main, idx);
+        const B = getCellValue(b.main, idx);
+        if (A === B) return 0;
         if (A < B) return dir === 'asc' ? -1 : 1;
-        if (A > B) return dir === 'asc' ? 1 : -1;
-        return 0;
+        return dir === 'asc' ? 1 : -1;
       });
-      rows.forEach(r => table.tBodies[0].appendChild(r));
+
+      const fragment = document.createDocumentFragment();
+      pairs.forEach(p => {
+          fragment.appendChild(p.main);
+          if (p.detail) fragment.appendChild(p.detail);
+      });
+      tbody.appendChild(fragment);
+
+      table.querySelectorAll('thead th').forEach(th => {
+          th.classList.remove('sorting-asc', 'sorting-desc');
+          if (th.cellIndex === idx) {
+              th.classList.add(dir === 'asc' ? 'sorting-asc' : 'sorting-desc');
+          }
+      });
+
       state.sort = { idx, dir };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       savePrefToServer();
