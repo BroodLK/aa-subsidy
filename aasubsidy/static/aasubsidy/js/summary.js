@@ -9,7 +9,7 @@
     showLoading();
 
     if (window.bootstrap) {
-      document.querySelectorAll('.claim-link').forEach(el => {
+      document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
         try { new bootstrap.Tooltip(el, { container: 'body', html: true }); } catch (e) {}
       });
     }

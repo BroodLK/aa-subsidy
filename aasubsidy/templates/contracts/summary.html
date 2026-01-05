@@ -33,9 +33,20 @@
                     </thead>
                     <tbody>
                     {% for r in system.rows %}
-                    <tr>
-                        <td data-val="{{ r.doctrine }}">{{ r.doctrine }}</td>
-                        <td data-val="{{ r.fitting_name }}"><a href="/fittings/fit/{{ r.fit_id }}/" target="_blank">{{ r.fitting_name }}</a></td>
+                    <tr class="{% if r.stock_requested == 0 %}not-requested{% endif %}">
+                        <td data-val="{{ r.doctrine }}">
+                            {% if r.doctrine_id %}
+                                <a href="/fittings/doctrine/{{ r.doctrine_id }}/" target="_blank">{{ r.doctrine }}</a>
+                            {% else %}
+                                {{ r.doctrine }}
+                            {% endif %}
+                        </td>
+                        <td data-val="{{ r.fitting_name }}">
+                            {% if r.stock_requested == 0 %}
+                                <i class="fa fa-info-circle text-info me-1" data-bs-toggle="tooltip" title="{% trans 'Available but not requested' %}"></i>
+                            {% endif %}
+                            <a href="/fittings/fit/{{ r.fit_id }}/" target="_blank">{{ r.fitting_name }}</a>
+                        </td>
                         <td class="text-end" data-val="{{ r.stock_requested }}">{{ r.stock_requested|intcomma }}</td>
                         <td class="text-end {% if r.stock_available > r.stock_requested %}text-success{% elif r.stock_available < r.stock_requested %}text-danger{% endif %}"
                             data-val="{{ r.stock_available }}">

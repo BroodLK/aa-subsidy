@@ -24,7 +24,13 @@
                                 {% for r in insights.unfulfilled_doctrines %}
                                 <tr>
                                     <td>{{ r.system }}</td>
-                                    <td>{{ r.doctrine }}</td>
+                                    <td>
+                                        {% if r.doctrine_id %}
+                                            <a href="/fittings/doctrine/{{ r.doctrine_id }}/" target="_blank" class="link-light text-decoration-none">{{ r.doctrine }}</a>
+                                        {% else %}
+                                            {{ r.doctrine }}
+                                        {% endif %}
+                                    </td>
                                     <td class="text-end text-danger fw-bold">{{ r.needed|intcomma }}</td>
                                     <td class="text-end">
                                         <div class="progress" style="height: 10px; background-color: #343a40;">

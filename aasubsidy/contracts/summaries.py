@@ -449,10 +449,15 @@ def doctrine_stock_summary(
             subsidy_isk = _ceil_to_increment(base, incr_val)
             alliance_purchase_isk = _ceil_to_increment(jita_sell + base, incr_val)
 
+            if requested == 0:
+                subsidy_isk = Decimal("0")
+                alliance_purchase_isk = Decimal("0")
+
             # Pick the best doctrine for this fitting in this system
             fitting_doctrines = fit_to_doctrines_list.get(fit_id, [])
             if not fitting_doctrines:
                 best_doctrine_name = "No Doctrine"
+                best_doctrine_id = None
             else:
                 # Sort doctrines by doctrine_sum_req[d.id] desc, then name asc
                 # Convert to list to avoid mutating the original
@@ -461,11 +466,13 @@ def doctrine_stock_summary(
                     key=lambda doc: (-doctrine_sum_req[doc.id], doc.name)
                 )
                 best_doctrine_name = sorted_docs[0].name
+                best_doctrine_id = sorted_docs[0].id
 
             system_rows.append(
                 {
                     "fit_id": fit_id,
                     "doctrine": best_doctrine_name,
+                    "doctrine_id": best_doctrine_id,
                     "fitting_name": r["name"],
                     "stock_requested": requested,
                     "stock_available": available,
@@ -650,6 +657,7 @@ def doctrine_insights(corporation_id: int | None = None):
                     {
                         "system": system["system_name"],
                         "doctrine": row["doctrine"],
+                        "doctrine_id": row["doctrine_id"],
                         "requested": row["stock_requested"],
                         "available": row["stock_available"],
                         "needed": row["stock_needed"],
