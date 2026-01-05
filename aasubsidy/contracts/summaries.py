@@ -656,8 +656,8 @@ def doctrine_insights(corporation_id: int | None = None):
                 unfulfilled_doctrines.append(
                     {
                         "system": system["system_name"],
-                        "doctrine": row["doctrine"],
-                        "doctrine_id": row["doctrine_id"],
+                        "fit_name": row["fitting_name"],
+                        "fit_id": row["fit_id"],
                         "requested": row["stock_requested"],
                         "available": row["stock_available"],
                         "needed": row["stock_needed"],
