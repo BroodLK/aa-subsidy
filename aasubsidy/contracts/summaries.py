@@ -516,6 +516,7 @@ def doctrine_insights(corporation_id: int | None = None):
     now = timezone.now()
     slow_threshold = now - timezone.timedelta(days=7)
     expired_threshold = now - timezone.timedelta(days=30)
+    sold_threshold = now - timezone.timedelta(days=30)
 
     slow_contracts_qs = (
         CorporateContract.objects.filter(
@@ -550,6 +551,16 @@ def doctrine_insights(corporation_id: int | None = None):
     )
     all_contracts += list(expired_contracts_qs)
 
+    sold_contracts_qs = (
+        CorporateContract.objects.filter(
+            corporation_id=corporation_id,
+            status__iexact="finished",
+            date_issued__gte=sold_threshold,
+        )
+        .select_related("issuer_name", "start_location_name", "aasubsidy_meta")
+    )
+    all_contracts += list(sold_contracts_qs)
+
     # Bulk matching for insights
     contract_pks = [c.id for c in all_contracts]
     all_contract_items = CorporateContractItem.objects.filter(
@@ -572,7 +583,7 @@ def doctrine_insights(corporation_id: int | None = None):
             fit_items_map[fid] = {}
         fit_items_map[fid][item["type_id"]] = item["quantity"]
         
-    def get_match_names(contract_pk):
+    def get_matches(contract_pk):
         c_items = contract_items_map.get(contract_pk, {})
         matches = []
         for f in all_fittings_info:
@@ -585,24 +596,27 @@ def doctrine_insights(corporation_id: int | None = None):
                     possible = False
                     break
             if possible:
-                matches.append(f["name"])
-        return sorted(matches)
+                matches.append(f)
+        return matches
 
     contract_titles = {}
+    contract_fit_pk = {}
     valid_contract_ids = set()
+    fitting_name_map = {f["pk"]: f["name"] for f in all_fittings_info}
+
     for c in all_contracts:
         meta = getattr(c, "aasubsidy_meta", None)
         forced_id = getattr(meta, "forced_fitting_id", None)
         if forced_id:
-            fit_name = (
-                Fitting.objects.filter(pk=forced_id).values_list("name", flat=True).first()
-            )
+            fit_name = fitting_name_map.get(forced_id)
             contract_titles[c.id] = f"{fit_name} (forced)" if fit_name else "Forced Doctrine"
+            contract_fit_pk[c.id] = forced_id
             valid_contract_ids.add(c.id)
         else:
-            fit_names = get_match_names(c.id)
-            if fit_names:
-                contract_titles[c.id] = ", ".join(fit_names)
+            matches = get_matches(c.id)
+            if matches:
+                contract_titles[c.id] = ", ".join([m["name"] for m in matches])
+                contract_fit_pk[c.id] = matches[0]["pk"]
                 valid_contract_ids.add(c.id)
             else:
                 continue
@@ -671,8 +685,74 @@ def doctrine_insights(corporation_id: int | None = None):
 
     unfulfilled_doctrines.sort(key=lambda x: (-x["needed"], x["fulfillment_pct"]))
 
+    fits_sold_counts = Counter()
+    for c in sold_contracts_qs:
+        fid = contract_fit_pk.get(c.id)
+        if fid:
+            fits_sold_counts[fid] += 1
+
+    on_hand_by_fit = Counter()
+    fit_to_doctrine = {}
+    for system in summary_data:
+        for row in system["rows"]:
+            fid = row["fit_id"]
+            on_hand_by_fit[fid] += row["stock_available"]
+            if fid not in fit_to_doctrine:
+                fit_to_doctrine[fid] = row["doctrine"]
+
+    all_doctrines = list(Doctrine.objects.prefetch_related("fittings").all())
+    fit_to_doctrines_list = defaultdict(list)
+    for d in all_doctrines:
+        for f in d.fittings.all():
+            fit_to_doctrines_list[f.id].append(d)
+
+    system_fit_reqs = {r["fitting_id"]: r["total"] for r in FittingRequest.objects.values("fitting_id").annotate(total=Sum("requested"))}
+    doctrine_sum_req = defaultdict(int)
+    for d in all_doctrines:
+        for f in d.fittings.all():
+            doctrine_sum_req[d.id] += system_fit_reqs.get(f.id, 0)
+
+    def get_best_doctrine(fid):
+        if fid in fit_to_doctrine:
+            return fit_to_doctrine[fid]
+        docs = fit_to_doctrines_list.get(fid, [])
+        if not docs:
+            return "No Doctrine"
+        sorted_docs = sorted(docs, key=lambda doc: (-doctrine_sum_req[doc.id], doc.name))
+        return sorted_docs[0].name
+
+    fits_sold = []
+    for fid, count in fits_sold_counts.items():
+        fits_sold.append({
+            "doctrine": get_best_doctrine(fid),
+            "fit_name": fitting_name_map.get(fid, "Unknown"),
+            "fit_id": fid,
+            "count": count
+        })
+    fits_sold.sort(key=lambda x: (x["doctrine"], x["fit_name"]))
+
+    stock_requirements = []
+    all_relevant_fit_ids = set(fits_sold_counts.keys()) | set(on_hand_by_fit.keys())
+    for fid in all_relevant_fit_ids:
+        sold = fits_sold_counts.get(fid, 0)
+        on_hand = on_hand_by_fit.get(fid, 0)
+        needed = max(0, sold - on_hand)
+        if sold == 0 and on_hand == 0:
+            continue
+        stock_requirements.append({
+            "doctrine": get_best_doctrine(fid),
+            "fit_name": fitting_name_map.get(fid, "Unknown"),
+            "fit_id": fid,
+            "sold": sold,
+            "on_hand": on_hand,
+            "needed": needed
+        })
+    stock_requirements.sort(key=lambda x: (x["doctrine"], x["fit_name"]))
+
     return {
         "slow_contracts": slow_contracts,
         "expired_contracts": expired_contracts,
         "unfulfilled_doctrines": unfulfilled_doctrines,
+        "fits_sold": fits_sold,
+        "stock_requirements": stock_requirements,
     }
