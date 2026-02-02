@@ -691,12 +691,10 @@ def doctrine_insights(corporation_id: int | None = None):
         if fid:
             fits_sold_counts[fid] += 1
 
-    on_hand_by_fit = Counter()
     fit_to_doctrine = {}
     for system in summary_data:
         for row in system["rows"]:
             fid = row["fit_id"]
-            on_hand_by_fit[fid] += row["stock_available"]
             if fid not in fit_to_doctrine:
                 fit_to_doctrine[fid] = row["doctrine"]
 
@@ -706,11 +704,14 @@ def doctrine_insights(corporation_id: int | None = None):
         for f in d.fittings.all():
             fit_to_doctrines_list[f.id].append(d)
 
-    system_fit_reqs = {r["fitting_id"]: r["total"] for r in FittingRequest.objects.values("fitting_id").annotate(total=Sum("requested"))}
+    requested_by_fit = {
+        r["fitting_id"]: int(r["total"] or 0)
+        for r in FittingRequest.objects.values("fitting_id").annotate(total=Sum("requested"))
+    }
     doctrine_sum_req = defaultdict(int)
     for d in all_doctrines:
         for f in d.fittings.all():
-            doctrine_sum_req[d.id] += system_fit_reqs.get(f.id, 0)
+            doctrine_sum_req[d.id] += requested_by_fit.get(f.id, 0)
 
     def get_best_doctrine(fid):
         if fid in fit_to_doctrine:
@@ -732,20 +733,20 @@ def doctrine_insights(corporation_id: int | None = None):
     fits_sold.sort(key=lambda x: (x["doctrine"], x["fit_name"]))
 
     stock_requirements = []
-    all_relevant_fit_ids = set(fits_sold_counts.keys()) | set(on_hand_by_fit.keys())
+    all_relevant_fit_ids = set(fits_sold_counts.keys()) | set(requested_by_fit.keys())
     for fid in all_relevant_fit_ids:
         sold = fits_sold_counts.get(fid, 0)
-        on_hand = on_hand_by_fit.get(fid, 0)
-        needed = max(0, sold - on_hand)
-        if sold == 0 and on_hand == 0:
+        stock_requested = requested_by_fit.get(fid, 0)
+        difference = stock_requested - sold
+        if sold == 0 and stock_requested == 0:
             continue
         stock_requirements.append({
             "doctrine": get_best_doctrine(fid),
             "fit_name": fitting_name_map.get(fid, "Unknown"),
             "fit_id": fid,
             "sold": sold,
-            "on_hand": on_hand,
-            "needed": needed
+            "stock_requested": stock_requested,
+            "difference": difference
         })
     stock_requirements.sort(key=lambda x: (x["doctrine"], x["fit_name"]))
 
