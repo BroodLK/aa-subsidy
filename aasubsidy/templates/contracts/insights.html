@@ -38,8 +38,11 @@
                                     </td>
                                 </tr>
                                 {% empty %}
-                                <tr>
-                                    <td colspan="4" class="text-center text-muted">{% trans "No unfulfilled requests." %}</td>
+                                <tr class="text-muted">
+                                    <td class="text-center">{% trans "No unfulfilled requests." %}</td>
+                                    <td>&nbsp;</td>
+                                    <td>&nbsp;</td>
+                                    <td>&nbsp;</td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -74,8 +77,11 @@
                                     <td class="text-end" data-order="{{ c.price }}">{{ c.price|intcomma }}</td>
                                 </tr>
                                 {% empty %}
-                                <tr>
-                                    <td colspan="4" class="text-center text-muted">{% trans "No slow moving contracts." %}</td>
+                                <tr class="text-muted">
+                                    <td class="text-center">{% trans "No slow moving contracts." %}</td>
+                                    <td>&nbsp;</td>
+                                    <td>&nbsp;</td>
+                                    <td>&nbsp;</td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -110,8 +116,11 @@
                                     <td class="text-end"><span class="badge bg-secondary">{{ c.status }}</span></td>
                                 </tr>
                                 {% empty %}
-                                <tr>
-                                    <td colspan="4" class="text-center text-muted">{% trans "No recently expired contracts." %}</td>
+                                <tr class="text-muted">
+                                    <td class="text-center">{% trans "No recently expired contracts." %}</td>
+                                    <td>&nbsp;</td>
+                                    <td>&nbsp;</td>
+                                    <td>&nbsp;</td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -128,7 +137,7 @@
                 <div class="card-header border-secondary d-flex justify-content-between align-items-center">
                     <h3 class="m-0">{% trans "Stock Requirements (30 Days)" %}</h3>
                 </div>
-                <div class="card-body insights-card-body">
+                <div class="card-body insights-card-body insights-card-body--stock">
                     <div class="table-responsive insights-table-wrap">
                         <table class="table table-sm align-middle mb-0 table-bordered table-dark insights-table w-100 insights-datatable" id="insights-stock">
                             <thead>
@@ -152,8 +161,12 @@
                                     <td class="text-end {% if r.difference < 0 %}text-danger fw-bold{% endif %}" data-order="{{ r.difference }}">{{ r.difference|intcomma }}</td>
                                 </tr>
                                 {% empty %}
-                                <tr>
-                                    <td colspan="5" class="text-center text-muted">{% trans "No stock requirements." %}</td>
+                                <tr class="text-muted">
+                                    <td class="text-center">{% trans "No stock requirements." %}</td>
+                                    <td>&nbsp;</td>
+                                    <td>&nbsp;</td>
+                                    <td>&nbsp;</td>
+                                    <td>&nbsp;</td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
