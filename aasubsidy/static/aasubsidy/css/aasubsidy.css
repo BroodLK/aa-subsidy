@@ -33,11 +33,11 @@ tr.not-requested td:first-child {
     overflow-y: auto;
 }
 
-.insights-page .insights-card-body--stock {
-    padding-top: 1.25rem;
-}
-
 .insights-page .insights-table th,
 .insights-page .insights-table td {
     padding: 0.5rem 0.75rem;
+}
+
+.insights-page .insights-card-header--stock {
+    padding-top: 0.75rem;
 }
