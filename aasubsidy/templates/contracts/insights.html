@@ -1,17 +1,17 @@
 {% extends 'contracts/base.html' %}
-{% load i18n humanize %}
+{% load aa_i18n i18n humanize %}
 
 {% block details %}
-<div class="container-xxl py-3">
-    <div class="row align-items-stretch">
+<div class="container-xxl py-3 insights-page">
+    <div class="row align-items-stretch insights-row">
         <div class="col-md-4">
-            <div class="card mb-4 bg-dark text-light border-secondary h-100">
+            <div class="card mb-4 bg-dark text-light border-secondary insights-card">
                 <div class="card-header border-secondary d-flex justify-content-between align-items-center">
                     <h3 class="m-0">{% trans "Unfulfilled Requests" %}</h3>
                 </div>
-                <div class="card-body p-2 d-flex flex-column">
-                    <div class="table-responsive flex-grow-1" style="max-height: 800px; overflow-y: auto;">
-                        <table class="table table-sm align-middle mb-0 table-bordered table-dark">
+                <div class="card-body d-flex flex-column insights-card-body">
+                    <div class="table-responsive insights-table-wrap">
+                        <table class="table table-sm align-middle mb-0 table-bordered table-dark insights-table w-100 insights-datatable" id="insights-unfulfilled">
                             <thead>
                                 <tr class="text-center">
                                     <th>{% trans "System" %}</th>
@@ -27,8 +27,8 @@
                                     <td>
                                         <a href="/fittings/fit/{{ r.fit_id }}/" target="_blank" class="link-light text-decoration-none">{{ r.fit_name }}</a>
                                     </td>
-                                    <td class="text-end text-danger fw-bold">{{ r.needed|intcomma }}</td>
-                                    <td class="text-end">
+                                    <td class="text-end text-danger fw-bold" data-order="{{ r.needed }}">{{ r.needed|intcomma }}</td>
+                                    <td class="text-end" data-order="{{ r.fulfillment_pct }}">
                                         <div class="progress" style="height: 10px; background-color: #343a40;">
                                             <div class="progress-bar {% if r.fulfillment_pct < 25 %}bg-danger{% elif r.fulfillment_pct < 75 %}bg-warning{% else %}bg-success{% endif %}"
                                                  role="progressbar" style="width: {{ r.fulfillment_pct }}%"
@@ -50,13 +50,13 @@
         </div>
 
         <div class="col-md-4">
-            <div class="card mb-4 bg-dark text-light border-secondary">
+            <div class="card mb-4 bg-dark text-light border-secondary insights-card">
                 <div class="card-header border-secondary d-flex justify-content-between align-items-center">
                     <h3 class="m-0">{% trans "Slow Moving" %}</h3>
                 </div>
-                <div class="card-body p-2" style="max-height: 600px; overflow-y: auto;">
-                    <div class="table-responsive">
-                        <table class="table table-sm align-middle mb-0 table-bordered table-dark">
+                <div class="card-body insights-card-body">
+                    <div class="table-responsive insights-table-wrap">
+                        <table class="table table-sm align-middle mb-0 table-bordered table-dark insights-table w-100 insights-datatable" id="insights-slow">
                             <thead>
                                 <tr class="text-center">
                                     <th>{% trans "Doctrine" %}</th>
@@ -70,8 +70,8 @@
                                 <tr>
                                     <td>{{ c.title }}</td>
                                     <td>{{ c.issuer }}</td>
-                                    <td class="text-end text-warning fw-bold">{{ c.days_outstanding }}</td>
-                                    <td class="text-end">{{ c.price|intcomma }}</td>
+                                    <td class="text-end text-warning fw-bold" data-order="{{ c.days_outstanding }}">{{ c.days_outstanding }}</td>
+                                    <td class="text-end" data-order="{{ c.price }}">{{ c.price|intcomma }}</td>
                                 </tr>
                                 {% empty %}
                                 <tr>
@@ -86,13 +86,13 @@
         </div>
 
         <div class="col-md-4">
-            <div class="card mb-4 bg-dark text-light border-secondary">
+            <div class="card mb-4 bg-dark text-light border-secondary insights-card">
                 <div class="card-header border-secondary d-flex justify-content-between align-items-center">
                     <h3 class="m-0">{% trans "Expired" %}</h3>
                 </div>
-                <div class="card-body p-2" style="max-height: 600px; overflow-y: auto;">
-                    <div class="table-responsive">
-                        <table class="table table-sm align-middle mb-0 table-bordered table-dark">
+                <div class="card-body insights-card-body">
+                    <div class="table-responsive insights-table-wrap">
+                        <table class="table table-sm align-middle mb-0 table-bordered table-dark insights-table w-100 insights-datatable" id="insights-expired">
                             <thead>
                                 <tr class="text-center">
                                     <th>{% trans "Doctrine" %}</th>
@@ -106,7 +106,7 @@
                                 <tr>
                                     <td>{{ c.title }}</td>
                                     <td>{{ c.issuer }}</td>
-                                    <td class="text-end text-danger small fw-bold">{{ c.date_expired|naturaltime }}</td>
+                                    <td class="text-end text-danger small fw-bold" data-order="{{ c.date_expired|date:'U' }}">{{ c.date_expired|naturaltime }}</td>
                                     <td class="text-end"><span class="badge bg-secondary">{{ c.status }}</span></td>
                                 </tr>
                                 {% empty %}
@@ -122,15 +122,15 @@
         </div>
     </div>
 
-    <div class="row align-items-stretch">
+    <div class="row align-items-stretch insights-row">
         <div class="col-12">
-            <div class="card mb-4 bg-dark text-light border-secondary">
+            <div class="card mb-4 bg-dark text-light border-secondary insights-card">
                 <div class="card-header border-secondary d-flex justify-content-between align-items-center">
                     <h3 class="m-0">{% trans "Stock Requirements (30 Days)" %}</h3>
                 </div>
-                <div class="card-body p-2" style="max-height: 600px; overflow-y: auto;">
-                    <div class="table-responsive">
-                        <table class="table table-sm align-middle mb-0 table-bordered table-dark">
+                <div class="card-body insights-card-body">
+                    <div class="table-responsive insights-table-wrap">
+                        <table class="table table-sm align-middle mb-0 table-bordered table-dark insights-table w-100 insights-datatable" id="insights-stock">
                             <thead>
                                 <tr class="text-center">
                                     <th>{% trans "Doctrine" %}</th>
@@ -147,9 +147,9 @@
                                     <td>
                                         <a href="/fittings/fit/{{ r.fit_id }}/" target="_blank" class="link-light text-decoration-none">{{ r.fit_name }}</a>
                                     </td>
-                                    <td class="text-end">{{ r.sold|intcomma }}</td>
-                                    <td class="text-end">{{ r.stock_requested|intcomma }}</td>
-                                    <td class="text-end {% if r.difference < 0 %}text-danger fw-bold{% endif %}">{{ r.difference|intcomma }}</td>
+                                    <td class="text-end" data-order="{{ r.sold }}">{{ r.sold|intcomma }}</td>
+                                    <td class="text-end" data-order="{{ r.stock_requested }}">{{ r.stock_requested|intcomma }}</td>
+                                    <td class="text-end {% if r.difference < 0 %}text-danger fw-bold{% endif %}" data-order="{{ r.difference }}">{{ r.difference|intcomma }}</td>
                                 </tr>
                                 {% empty %}
                                 <tr>
@@ -164,4 +164,32 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_javascript %}
+    {{ block.super }}
+    {% include "bundles/datatables-js-bs5.html" %}
+
+    {% get_datatables_language_static LANGUAGE_CODE as DT_LANG_PATH %}
+
+    <script>
+        $(document).ready(() => {
+            const options = {
+                language: {url: '{{ DT_LANG_PATH }}'},
+                stateSave: true,
+                stateDuration: 0,
+                paging: false,
+                info: false,
+                lengthChange: false,
+                order: []
+            };
+
+            $('.insights-datatable').DataTable(options);
+        });
+    </script>
+{% endblock %}
+
+{% block extra_css %}
+    {{ block.super }}
+    {% include "bundles/datatables-css-bs5.html" %}
 {% endblock %}

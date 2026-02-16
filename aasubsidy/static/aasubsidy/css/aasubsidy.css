@@ -15,3 +15,25 @@ tr.not-requested td {
 tr.not-requested td:first-child {
     border-left: 3px solid #6c757d !important;
 }
+
+.insights-page .insights-card {
+    height: 100%;
+}
+
+.insights-page .insights-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 1rem;
+}
+
+.insights-page .insights-table-wrap {
+    flex: 1 1 auto;
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+.insights-page .insights-table th,
+.insights-page .insights-table td {
+    padding: 0.5rem 0.75rem;
+}
