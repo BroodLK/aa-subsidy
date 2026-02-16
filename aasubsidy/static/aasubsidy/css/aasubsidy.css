@@ -37,7 +37,3 @@ tr.not-requested td:first-child {
 .insights-page .insights-table td {
     padding: 0.5rem 0.75rem;
 }
-
-.insights-page .insights-card-header--stock {
-    padding-top: 0.75rem;
-}
