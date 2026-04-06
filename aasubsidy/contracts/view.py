@@ -39,10 +39,36 @@ def _all_character_ids_for_user(user) -> List[int]:
         return []
 
 
-def _build_stats_payload(contracts_qs):
+def _main_name_for_issuer(issuer_eve_id: int | None, fallback_name: str, cache: dict[int, str]) -> str:
+    if not issuer_eve_id:
+        return fallback_name
+    if issuer_eve_id in cache:
+        return cache[issuer_eve_id]
+    try:
+        char = (
+            EveCharacter.objects.filter(character_id=issuer_eve_id)
+            .select_related("character_ownership__user__profile__main_character")
+            .only("id")
+            .first()
+        )
+        if not char or not getattr(char, "character_ownership", None):
+            cache[issuer_eve_id] = fallback_name
+            return fallback_name
+        profile = getattr(char.character_ownership.user, "profile", None)
+        main = getattr(profile, "main_character", None) if profile else None
+        resolved = getattr(main, "character_name", None) or fallback_name
+        cache[issuer_eve_id] = resolved
+        return resolved
+    except Exception:
+        cache[issuer_eve_id] = fallback_name
+        return fallback_name
+
+
+def _build_stats_payload(contracts_qs, aggregate_to_main: bool = False):
     rows = []
     totals_by_char: dict[str, int] = {}
     contract_count_by_char: dict[str, int] = {}
+    main_name_cache: dict[int, str] = {}
 
     for c in contracts_qs:
         meta = getattr(c, "aasubsidy_meta", None)
@@ -52,6 +78,12 @@ def _build_stats_payload(contracts_qs):
         paid = bool(getattr(meta, "paid", False))
         exempt = bool(getattr(meta, "exempt", False))
         issuer = getattr(c.issuer_name, "name", "Unknown")
+        issuer_eve_id = getattr(c.issuer_name, "eve_id", None)
+        stats_name = (
+            _main_name_for_issuer(issuer_eve_id, issuer, main_name_cache)
+            if aggregate_to_main
+            else issuer
+        )
 
         rows.append(
             {
@@ -70,14 +102,14 @@ def _build_stats_payload(contracts_qs):
             }
         )
 
-        if issuer not in totals_by_char:
-            totals_by_char[issuer] = 0
-            contract_count_by_char[issuer] = 0
+        if stats_name not in totals_by_char:
+            totals_by_char[stats_name] = 0
+            contract_count_by_char[stats_name] = 0
 
         if review_status == 1:
-            totals_by_char[issuer] += int(subsidy_amount or 0)
+            totals_by_char[stats_name] += int(subsidy_amount or 0)
 
-        contract_count_by_char[issuer] += 1
+        contract_count_by_char[stats_name] += 1
 
     per_character = []
     for name in sorted(totals_by_char.keys(), key=str.lower):
@@ -220,7 +252,9 @@ class GlobalStatsView(LoginRequiredMixin, PermissionRequiredMixin, TemplateView)
             .order_by("-date_issued")
         )
 
-        per_character, per_character_totals, rows = _build_stats_payload(contracts_qs)
+        per_character, per_character_totals, rows = _build_stats_payload(
+            contracts_qs, aggregate_to_main=True
+        )
         ctx["per_character"] = per_character
         ctx["per_character_totals"] = per_character_totals
         ctx["contracts"] = rows
