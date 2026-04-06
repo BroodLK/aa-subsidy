@@ -5,7 +5,9 @@
 <div class="container-xxl py-3">
   <div class="card mb-4">
     <div class="card-header d-flex justify-content-between align-items-center">
-      <h3 class="m-0">{% trans "Your Subsidy Stats" %}</h3>
+      <h3 class="m-0">
+        {% if is_global_stats %}{% trans "Alliance Subsidy Stats" %}{% else %}{% trans "Your Subsidy Stats" %}{% endif %}
+      </h3>
     </div>
     <div class="card-body p-2">
       <div class="table-responsive mb-3">
@@ -33,7 +35,9 @@
         </table>
       </div>
 
-      <h5 class="mb-2">{% trans "Your Contracts" %}</h5>
+      <h5 class="mb-2">
+        {% if is_global_stats %}{% trans "All Contracts" %}{% else %}{% trans "Your Contracts" %}{% endif %}
+      </h5>
       <div class="table-responsive">
         <table class="table table-sm align-middle mb-0 table-bordered">
           <thead class="table-dark">

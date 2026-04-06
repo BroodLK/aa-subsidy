@@ -17,6 +17,7 @@ urlpatterns = [
     path("contract/payments/", v.PaymentsView.as_view(), name="payments"),
     path("contract/payments/mark-paid/", v.MarkPaidView.as_view(), name="payments_mark_paid"),
     path("contract/user/stats/", v.UserStatsView.as_view(), name="user_stats"),
+    path("contract/stats/", v.GlobalStatsView.as_view(), name="all_stats"),
     path("contract/<int:contract_id>/force-fit/", v.ForceFitView.as_view(), name="force_fit"),
     path("contract/<int:contract_id>/items/", v.ContractItemsView.as_view(), name="contract_items"),
     path("admin/doctrines/", DoctrineRequestsAdminView.as_view(), name="doctrine_admin"),

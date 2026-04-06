@@ -108,9 +108,15 @@
               <td data-val="{{ row.doctrine|striptags }}">
                   <div class="d-flex flex-column gap-1">
                     <div class="doctrine-display">{{ row.doctrine|safe|default:"—" }}</div>
-                    <div class="d-flex align-items-center gap-1 force-fit-container d-none">
+                    <div class="d-flex flex-column align-items-stretch gap-1 force-fit-container d-none">
+                      <input
+                        type="search"
+                        class="form-control form-control-sm force-fit-search"
+                        placeholder="{% trans 'Search doctrine...' %}"
+                        autocomplete="off"
+                      >
                       <select class="form-select form-select-sm force-fit-select" data-contract="{{ row.id }}">
-                        <option value="__clear__">{% trans "Chose a doctrine" %}</option>
+                        <option value="">{% trans "Choose a doctrine" %}</option>
                         <option value="__clear__">{% trans "Clear choice" %}</option>
                         {% for f in all_fits %}
                           <option value="{{ f.id }}">{{ f.name }}</option>

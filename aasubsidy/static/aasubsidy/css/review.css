@@ -2,3 +2,10 @@
 .detail-row { display: none; }
 .detail-row.show { display: table-row !important; }
 .detail-row.collapsing { display: table-row; }
+.force-fit-container {
+  min-width: 220px;
+}
+.force-fit-search,
+.force-fit-select {
+  width: 100%;
+}

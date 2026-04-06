@@ -39,6 +39,59 @@ def _all_character_ids_for_user(user) -> List[int]:
         return []
 
 
+def _build_stats_payload(contracts_qs):
+    rows = []
+    totals_by_char: dict[str, int] = {}
+    contract_count_by_char: dict[str, int] = {}
+
+    for c in contracts_qs:
+        meta = getattr(c, "aasubsidy_meta", None)
+        subsidy_amount = float(getattr(meta, "subsidy_amount", 0) or 0)
+        review_status = getattr(meta, "review_status", 0)
+        status_label = {1: "Approved", -1: "Rejected"}.get(review_status, "Pending")
+        paid = bool(getattr(meta, "paid", False))
+        exempt = bool(getattr(meta, "exempt", False))
+        issuer = getattr(c.issuer_name, "name", "Unknown")
+
+        rows.append(
+            {
+                "id": c.contract_id,
+                "issuer": issuer,
+                "date_issued": c.date_issued,
+                "price_listed": int(c.price or 0),
+                "status": c.status,
+                "title": c.title or "",
+                "station": getattr(c.start_location_name, "location_name", "") or "",
+                "review_status": status_label,
+                "subsidy_amount": subsidy_amount,
+                "paid": paid,
+                "exempt": exempt,
+                "reason": getattr(meta, "reason", "") if meta else "",
+            }
+        )
+
+        if issuer not in totals_by_char:
+            totals_by_char[issuer] = 0
+            contract_count_by_char[issuer] = 0
+
+        if review_status == 1:
+            totals_by_char[issuer] += int(subsidy_amount or 0)
+
+        contract_count_by_char[issuer] += 1
+
+    per_character = []
+    for name in sorted(totals_by_char.keys(), key=str.lower):
+        per_character.append(
+            {
+                "character": name,
+                "approved_total": totals_by_char[name],
+                "contract_count": contract_count_by_char.get(name, 0),
+            }
+        )
+
+    return per_character, rows
+
+
 def get_main_for_character(character: EveCharacter):
     try:
         return character.character_ownership.user.profile.main_character
@@ -138,57 +191,30 @@ class UserStatsView(LoginRequiredMixin, PermissionRequiredMixin, TemplateView):
             .order_by("-date_issued")
         )
 
-        rows = []
-        totals_by_char: dict[str, int] = {}
-        contract_count_by_char: dict[str, int] = {}
-
-        for c in contracts_qs:
-            meta = getattr(c, "aasubsidy_meta", None)
-            subsidy_amount = float(getattr(meta, "subsidy_amount", 0) or 0)
-            review_status = getattr(meta, "review_status", 0)
-            status_label = {1: "Approved", -1: "Rejected"}.get(review_status, "Pending")
-            paid = bool(getattr(meta, "paid", False))
-            exempt = bool(getattr(meta, "exempt", False))
-            issuer = getattr(c.issuer_name, "name", "Unknown")
-
-            rows.append(
-                {
-                    "id": c.contract_id,
-                    "issuer": issuer,
-                    "date_issued": c.date_issued,
-                    "price_listed": int(c.price or 0),
-                    "status": c.status,
-                    "title": c.title or "",
-                    "station": getattr(c.start_location_name, "location_name", "") or "",
-                    "review_status": status_label,
-                    "subsidy_amount": subsidy_amount,
-                    "paid": paid,
-                    "exempt": exempt,
-                    "reason": getattr(meta, "reason", "") if meta else "",
-                }
-            )
-
-            if issuer not in totals_by_char:
-                totals_by_char[issuer] = 0
-                contract_count_by_char[issuer] = 0
-
-            if review_status == 1:
-                totals_by_char[issuer] += int(subsidy_amount or 0)
-
-            contract_count_by_char[issuer] += 1
-
-        per_character = []
-        for name in sorted(totals_by_char.keys(), key=str.lower):
-            per_character.append(
-                {
-                    "character": name,
-                    "approved_total": totals_by_char[name],
-                    "contract_count": contract_count_by_char.get(name, 0),
-                }
-            )
-
+        per_character, rows = _build_stats_payload(contracts_qs)
         ctx["per_character"] = per_character
         ctx["contracts"] = rows
+        ctx["is_global_stats"] = False
+        return ctx
+
+
+class GlobalStatsView(LoginRequiredMixin, PermissionRequiredMixin, TemplateView):
+    template_name = "contracts/user_stats.html"
+    permission_required = "aasubsidy.subsidy_admin"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        cfg = SubsidyConfig.active()
+        contracts_qs = (
+            CorporateContract.objects.filter(corporation_id=cfg.corporation_id)
+            .select_related("issuer_name", "start_location_name", "aasubsidy_meta")
+            .order_by("-date_issued")
+        )
+
+        per_character, rows = _build_stats_payload(contracts_qs)
+        ctx["per_character"] = per_character
+        ctx["contracts"] = rows
+        ctx["is_global_stats"] = True
         return ctx
 
 

@@ -243,14 +243,84 @@
 
     applyFilters();
 
+    const fitNameCollator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+    const renderForceFitOptions = (sel, query) => {
+      const normalizedQuery = (query || '').trim().toLowerCase();
+      const options = sel._fitOptions || [];
+      const filtered = normalizedQuery
+        ? options.filter(opt => opt.text.toLowerCase().includes(normalizedQuery))
+        : options;
+
+      const placeholderText = sel._placeholderText || 'Choose a doctrine';
+      const clearText = sel._clearText || 'Clear choice';
+      const frag = document.createDocumentFragment();
+
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = placeholderText;
+      frag.appendChild(placeholder);
+
+      const clear = document.createElement('option');
+      clear.value = '__clear__';
+      clear.textContent = clearText;
+      frag.appendChild(clear);
+
+      filtered.forEach(opt => {
+        const el = document.createElement('option');
+        el.value = opt.value;
+        el.textContent = opt.text;
+        frag.appendChild(el);
+      });
+
+      sel.innerHTML = '';
+      sel.appendChild(frag);
+      sel.selectedIndex = 0;
+    };
+
+    const setupForceFitSelector = (container) => {
+      const sel = container.querySelector('.force-fit-select');
+      const search = container.querySelector('.force-fit-search');
+      if (!sel || !search) return;
+
+      const placeholderOption = sel.querySelector('option[value=""]');
+      const clearOption = sel.querySelector('option[value="__clear__"]');
+      sel._placeholderText = placeholderOption ? placeholderOption.textContent.trim() : 'Choose a doctrine';
+      sel._clearText = clearOption ? clearOption.textContent.trim() : 'Clear choice';
+
+      const fitOptions = Array.from(sel.options)
+        .filter(opt => opt.value && opt.value !== '__clear__')
+        .map(opt => ({ value: opt.value, text: opt.textContent.trim() }))
+        .sort((a, b) => fitNameCollator.compare(a.text, b.text));
+
+      sel._fitOptions = fitOptions;
+      renderForceFitOptions(sel, '');
+
+      search.addEventListener('input', () => {
+        renderForceFitOptions(sel, search.value);
+      });
+    };
+
+    document.querySelectorAll('.force-fit-container').forEach(setupForceFitSelector);
+
     document.addEventListener('click', (e) => {
       const td = e.target.closest('td[data-val]');
       const isDoctrineCell = td && Array.from(td.parentElement.parentElement.tHead?.rows?.[0]?.cells || document.querySelectorAll('#contractsTable thead tr:first-child th'))
         .some((th, idx) => th.getAttribute('data-col') === 'doctrine' && td.cellIndex === idx);
 
       if (isDoctrineCell) {
+        if (e.target.closest('.force-fit-container')) return;
         const container = td.querySelector('.force-fit-container');
-        if (container) container.classList.remove('d-none');
+        document.querySelectorAll('.force-fit-container').forEach(c => {
+          if (c !== container) c.classList.add('d-none');
+        });
+        if (container) {
+          const search = container.querySelector('.force-fit-search');
+          const sel = container.querySelector('.force-fit-select');
+          if (search) search.value = '';
+          if (sel) renderForceFitOptions(sel, '');
+          container.classList.remove('d-none');
+          if (search) search.focus();
+        }
       } else {
         document.querySelectorAll('.force-fit-container').forEach(c => c.classList.add('d-none'));
       }
@@ -280,6 +350,7 @@
           sel.addEventListener('change', async () => {
             const contractId = sel.getAttribute('data-contract');
             const fitId = sel.value;
+            if (!fitId) return;
             const token = (document.querySelector('[name=csrfmiddlewaretoken]')||{}).value || '';
             const url = window.AASubsidyConfig.forceFitUrl.replace("/0/", `/${contractId}/`);
             showLoading();
