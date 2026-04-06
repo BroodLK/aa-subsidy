@@ -68,6 +68,7 @@ def _build_stats_payload(contracts_qs, aggregate_to_main: bool = False):
     rows = []
     totals_by_char: dict[str, int] = {}
     contract_count_by_char: dict[str, int] = {}
+    approved_count_by_char: dict[str, int] = {}
     main_name_cache: dict[int, str] = {}
 
     for c in contracts_qs:
@@ -84,11 +85,17 @@ def _build_stats_payload(contracts_qs, aggregate_to_main: bool = False):
             if aggregate_to_main
             else issuer
         )
+        issuer_main = (
+            _main_name_for_issuer(issuer_eve_id, issuer, main_name_cache)
+            if aggregate_to_main
+            else ""
+        )
 
         rows.append(
             {
                 "id": c.contract_id,
                 "issuer": issuer,
+                "issuer_main": issuer_main,
                 "date_issued": c.date_issued,
                 "price_listed": int(c.price or 0),
                 "status": c.status,
@@ -105,15 +112,18 @@ def _build_stats_payload(contracts_qs, aggregate_to_main: bool = False):
         if stats_name not in totals_by_char:
             totals_by_char[stats_name] = 0
             contract_count_by_char[stats_name] = 0
+            approved_count_by_char[stats_name] = 0
 
         if review_status == 1:
             totals_by_char[stats_name] += int(subsidy_amount or 0)
+            approved_count_by_char[stats_name] += 1
 
         contract_count_by_char[stats_name] += 1
 
     per_character = []
     for name in sorted(totals_by_char.keys(), key=str.lower):
         approved_total = totals_by_char[name]
+        approved_contract_count = approved_count_by_char.get(name, 0)
         if approved_total <= 0:
             continue
         per_character.append(
@@ -121,13 +131,25 @@ def _build_stats_payload(contracts_qs, aggregate_to_main: bool = False):
                 "character": name,
                 "approved_total": approved_total,
                 "contract_count": contract_count_by_char.get(name, 0),
+                "approved_contract_count": approved_contract_count,
+                "avg_per_approved": (
+                    approved_total / approved_contract_count
+                    if approved_contract_count > 0
+                    else 0
+                ),
             }
         )
 
     per_character_totals = {
         "contract_count": sum(r["contract_count"] for r in per_character),
+        "approved_contract_count": sum(r["approved_contract_count"] for r in per_character),
         "approved_total": sum(r["approved_total"] for r in per_character),
     }
+    per_character_totals["avg_per_approved"] = (
+        per_character_totals["approved_total"] / per_character_totals["approved_contract_count"]
+        if per_character_totals["approved_contract_count"] > 0
+        else 0
+    )
 
     return per_character, per_character_totals, rows
 

@@ -17,6 +17,7 @@
               <th scope="col" data-col="character">{% trans "Character" %}</th>
               <th scope="col" data-col="contract_count">{% trans "Contracts" %}</th>
               <th scope="col" data-col="approved_total">{% trans "Approved Total (ISK)" %}</th>
+              <th scope="col" data-col="avg_per_approved">{% trans "Avg ISK / Approved Contract" %}</th>
             </tr>
           </thead>
           <tbody>
@@ -25,10 +26,11 @@
               <td data-val="{{ r.character|lower }}">{{ r.character }}</td>
               <td class="text-end" data-val="{{ r.contract_count }}">{{ r.contract_count|intcomma }}</td>
               <td class="text-end" data-val="{{ r.approved_total }}">{{ r.approved_total|intcomma }}</td>
+              <td class="text-end" data-val="{{ r.avg_per_approved }}">{{ r.avg_per_approved|floatformat:2|intcomma }}</td>
             </tr>
             {% empty %}
             <tr>
-              <td colspan="3" class="text-center text-muted">{% trans "No data available." %}</td>
+              <td colspan="4" class="text-center text-muted">{% trans "No data available." %}</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -37,6 +39,7 @@
               <th scope="row" class="text-end">{% trans "Totals" %}</th>
               <th class="text-end" data-val="{{ per_character_totals.contract_count }}">{{ per_character_totals.contract_count|intcomma }}</th>
               <th class="text-end" data-val="{{ per_character_totals.approved_total }}">{{ per_character_totals.approved_total|intcomma }}</th>
+              <th class="text-end" data-val="{{ per_character_totals.avg_per_approved }}">{{ per_character_totals.avg_per_approved|floatformat:2|intcomma }}</th>
             </tr>
           </tfoot>
         </table>
@@ -83,7 +86,12 @@
             {% for row in contracts %}
             <tr class="text-center" data-review-status="{{ row.review_status|lower }}">
               <td data-val="{{ row.id }}">{{ row.id }}</td>
-              <td data-val="{{ row.issuer|lower }}">{{ row.issuer }}</td>
+              <td data-val="{{ row.issuer|lower }}">
+                {{ row.issuer }}
+                {% if is_global_stats and row.issuer_main and row.issuer_main != row.issuer %}
+                  <span class="text-muted">({{ row.issuer_main }})</span>
+                {% endif %}
+              </td>
               <td data-val="{{ row.date_issued|date:'U' }}">{{ row.date_issued }}</td>
               <td class="text-end" data-val="{{ row.price_listed }}">{{ row.price_listed|intcomma }}</td>
               <td data-val="{{ row.status|lower }}">{{ row.status|title }}</td>
