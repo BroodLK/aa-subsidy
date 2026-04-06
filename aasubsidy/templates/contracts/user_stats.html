@@ -1,5 +1,5 @@
 {% extends 'contracts/base.html' %}
-{% load i18n humanize %}
+{% load i18n humanize static %}
 
 {% block details %}
 <div class="container-xxl py-3">
@@ -11,20 +11,20 @@
     </div>
     <div class="card-body p-2">
       <div class="table-responsive mb-3">
-        <table class="table table-sm align-middle mb-0 table-bordered">
+        <table id="statsByCharacterTable" class="table table-sm align-middle mb-0 table-bordered">
           <thead class="table-dark">
             <tr class="text-center">
-              <th scope="col">{% trans "Character" %}</th>
-              <th scope="col">{% trans "Contracts" %}</th>
-              <th scope="col">{% trans "Approved Total (ISK)" %}</th>
+              <th scope="col" data-col="character">{% trans "Character" %}</th>
+              <th scope="col" data-col="contract_count">{% trans "Contracts" %}</th>
+              <th scope="col" data-col="approved_total">{% trans "Approved Total (ISK)" %}</th>
             </tr>
           </thead>
           <tbody>
             {% for r in per_character %}
             <tr>
-              <td>{{ r.character }}</td>
-              <td class="text-end">{{ r.contract_count|intcomma }}</td>
-              <td class="text-end">{{ r.approved_total|intcomma }}</td>
+              <td data-val="{{ r.character|lower }}">{{ r.character }}</td>
+              <td class="text-end" data-val="{{ r.contract_count }}">{{ r.contract_count|intcomma }}</td>
+              <td class="text-end" data-val="{{ r.approved_total }}">{{ r.approved_total|intcomma }}</td>
             </tr>
             {% empty %}
             <tr>
@@ -32,53 +32,76 @@
             </tr>
             {% endfor %}
           </tbody>
+          <tfoot>
+            <tr class="table-dark">
+              <th scope="row" class="text-end">{% trans "Totals" %}</th>
+              <th class="text-end" data-val="{{ per_character_totals.contract_count }}">{{ per_character_totals.contract_count|intcomma }}</th>
+              <th class="text-end" data-val="{{ per_character_totals.approved_total }}">{{ per_character_totals.approved_total|intcomma }}</th>
+            </tr>
+          </tfoot>
         </table>
       </div>
 
-      <h5 class="mb-2">
-        {% if is_global_stats %}{% trans "All Contracts" %}{% else %}{% trans "Your Contracts" %}{% endif %}
-      </h5>
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+        <h5 class="mb-0">
+          {% if is_global_stats %}{% trans "All Contracts" %}{% else %}{% trans "Your Contracts" %}{% endif %}
+        </h5>
+        <div class="d-flex align-items-center flex-wrap gap-3">
+          <div class="form-check m-0">
+            <input class="form-check-input" type="checkbox" id="hideApproved">
+            <label class="form-check-label small" for="hideApproved">{% trans "Hide Approved" %}</label>
+          </div>
+          <div class="form-check m-0">
+            <input class="form-check-input" type="checkbox" id="hideRejected">
+            <label class="form-check-label small" for="hideRejected">{% trans "Hide Rejected" %}</label>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline-primary" id="exportContractsCsv">
+            {% trans "Export CSV" %}
+          </button>
+        </div>
+      </div>
+
       <div class="table-responsive">
-        <table class="table table-sm align-middle mb-0 table-bordered">
+        <table id="contractsStatsTable" class="table table-sm align-middle mb-0 table-bordered">
           <thead class="table-dark">
             <tr class="text-center">
-              <th>{% trans "ID" %}</th>
-              <th>{% trans "Issuer" %}</th>
-              <th>{% trans "Date Issued" %}</th>
-              <th>{% trans "Price Listed" %}</th>
-              <th>{% trans "Status" %}</th>
-              <th>{% trans "Title" %}</th>
-              <th>{% trans "Station" %}</th>
-              <th>{% trans "Review Status" %}</th>
-              <th>{% trans "Subsidy Amount" %}</th>
-              <th>{% trans "Paid" %}</th>
-              <th>{% trans "Exempt" %}</th>
-              <th>{% trans "Reason" %}</th>
+              <th data-col="id">{% trans "ID" %}</th>
+              <th data-col="issuer">{% trans "Issuer" %}</th>
+              <th data-col="date_issued">{% trans "Date Issued" %}</th>
+              <th data-col="price_listed">{% trans "Price Listed" %}</th>
+              <th data-col="status">{% trans "Status" %}</th>
+              <th data-col="title">{% trans "Title" %}</th>
+              <th data-col="station">{% trans "Station" %}</th>
+              <th data-col="review_status">{% trans "Review Status" %}</th>
+              <th data-col="subsidy_amount">{% trans "Subsidy Amount" %}</th>
+              <th data-col="paid">{% trans "Paid" %}</th>
+              <th data-col="exempt">{% trans "Exempt" %}</th>
+              <th data-col="reason">{% trans "Reason" %}</th>
             </tr>
           </thead>
           <tbody>
             {% for row in contracts %}
-            <tr class="text-center">
-              <td>{{ row.id }}</td>
-              <td>{{ row.issuer }}</td>
-              <td>{{ row.date_issued }}</td>
-              <td class="text-end">{{ row.price_listed|intcomma }}</td>
-              <td>{{ row.status|title }}</td>
-              <td>{{ row.title|escape }}</td>
-              <td>
+            <tr class="text-center" data-review-status="{{ row.review_status|lower }}">
+              <td data-val="{{ row.id }}">{{ row.id }}</td>
+              <td data-val="{{ row.issuer|lower }}">{{ row.issuer }}</td>
+              <td data-val="{{ row.date_issued|date:'U' }}">{{ row.date_issued }}</td>
+              <td class="text-end" data-val="{{ row.price_listed }}">{{ row.price_listed|intcomma }}</td>
+              <td data-val="{{ row.status|lower }}">{{ row.status|title }}</td>
+              <td data-val="{{ row.title|lower }}">{{ row.title|escape }}</td>
+              <td data-val="{{ row.station|lower }}">
                 {% if row.station %}
                   <i class="fa fa-location-dot text-info" data-bs-toggle="tooltip" title="{{ row.station|escape }}"></i>
-                {% else %}—{% endif %}
+                {% else %}&mdash;{% endif %}
               </td>
-              <td>
+              <td data-val="{{ row.review_status|lower }}">
                 <span class="{% if row.review_status == 'Approved' %}text-success{% elif row.review_status == 'Rejected' %}text-danger{% endif %}">
                   {{ row.review_status }}
                 </span>
               </td>
-              <td class="text-end">{{ row.subsidy_amount|floatformat:2|intcomma }}</td>
-              <td><span class="{% if row.paid %}text-success{% endif %}">{{ row.paid|yesno:"Yes,No" }}</span></td>
-              <td>{{ row.exempt|yesno:"Yes,No" }}</td>
-              <td class="text-start">{{ row.reason|default_if_none:''|escape }}</td>
+              <td class="text-end" data-val="{{ row.subsidy_amount }}">{{ row.subsidy_amount|floatformat:2|intcomma }}</td>
+              <td data-val="{{ row.paid|yesno:'1,0' }}"><span class="{% if row.paid %}text-success{% endif %}">{{ row.paid|yesno:"Yes,No" }}</span></td>
+              <td data-val="{{ row.exempt|yesno:'1,0' }}">{{ row.exempt|yesno:"Yes,No" }}</td>
+              <td class="text-start" data-val="{{ row.reason|default_if_none:''|lower }}">{{ row.reason|default_if_none:''|escape }}</td>
             </tr>
             {% empty %}
             <tr><td colspan="12" class="text-center text-muted">{% trans "No contracts to display." %}</td></tr>
@@ -89,4 +112,5 @@
     </div>
   </div>
 </div>
+<script src="{% static 'aasubsidy/js/user_stats.js' %}"></script>
 {% endblock %}

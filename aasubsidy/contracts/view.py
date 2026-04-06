@@ -81,15 +81,23 @@ def _build_stats_payload(contracts_qs):
 
     per_character = []
     for name in sorted(totals_by_char.keys(), key=str.lower):
+        approved_total = totals_by_char[name]
+        if approved_total <= 0:
+            continue
         per_character.append(
             {
                 "character": name,
-                "approved_total": totals_by_char[name],
+                "approved_total": approved_total,
                 "contract_count": contract_count_by_char.get(name, 0),
             }
         )
 
-    return per_character, rows
+    per_character_totals = {
+        "contract_count": sum(r["contract_count"] for r in per_character),
+        "approved_total": sum(r["approved_total"] for r in per_character),
+    }
+
+    return per_character, per_character_totals, rows
 
 
 def get_main_for_character(character: EveCharacter):
@@ -191,8 +199,9 @@ class UserStatsView(LoginRequiredMixin, PermissionRequiredMixin, TemplateView):
             .order_by("-date_issued")
         )
 
-        per_character, rows = _build_stats_payload(contracts_qs)
+        per_character, per_character_totals, rows = _build_stats_payload(contracts_qs)
         ctx["per_character"] = per_character
+        ctx["per_character_totals"] = per_character_totals
         ctx["contracts"] = rows
         ctx["is_global_stats"] = False
         return ctx
@@ -211,8 +220,9 @@ class GlobalStatsView(LoginRequiredMixin, PermissionRequiredMixin, TemplateView)
             .order_by("-date_issued")
         )
 
-        per_character, rows = _build_stats_payload(contracts_qs)
+        per_character, per_character_totals, rows = _build_stats_payload(contracts_qs)
         ctx["per_character"] = per_character
+        ctx["per_character_totals"] = per_character_totals
         ctx["contracts"] = rows
         ctx["is_global_stats"] = True
         return ctx
