@@ -54,7 +54,7 @@
                         </td>
                         <td class="text-end" data-val="{{ r.stock_needed }}">
                             {% with needed=r.stock_needed adj=r.adjusted_needed %}
-                                {% if needed > 0 or r.claimed_total|default:0 > 0 %}
+                                {% if r.stock_requested > 0 or r.claimed_total|default:0 > 0 %}
                                     <a href="#"
                                        class="claim-link {% if r.claimed_total|default:0 > 0 %}text-warning{% else %}text-danger{% endif %}"
                                        data-bs-toggle="modal"
