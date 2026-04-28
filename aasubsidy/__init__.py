@@ -1,4 +1,4 @@
 """Initialize the app"""
 
-__version__ = "0.0.1.4"
+__version__ = "1.0.61"
 __title__ = "AA Subsidy"
