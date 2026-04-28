@@ -612,7 +612,7 @@ def evaluate_contract_against_definition(
                 _issue(
                     "warning",
                     "unexpected_extra_item",
-                    f"Unexpected extra item: {actual_name}.",
+                    f"Extra item: {actual_name} (qty: {qty}).",
                     actual_type_id=actual_type_id,
                     actual_qty=qty,
                     fitting_id=fitting.fitting_id,
@@ -638,7 +638,7 @@ def evaluate_contract_against_definition(
                 _issue(
                     "error",
                     "unexpected_extra_item",
-                    f"Unexpected extra item: {actual_name}.",
+                    f"Extra item not allowed: {actual_name} (qty: {qty}).",
                     actual_type_id=actual_type_id,
                     actual_qty=qty,
                     fitting_id=fitting.fitting_id,
@@ -723,9 +723,9 @@ def _select_result(
             matched_fitting_id=None,
             matched_fitting_name=None,
             match_source="auto",
-            match_status="rejected",
+            match_status="no_match",
             score=ZERO,
-            hard_failures=[_issue("error", "manual_reject", "Reviewer rejected this contract for doctrine matching.")],
+            hard_failures=[_issue("error", "manual_reject", "Manually marked as no match.")],
             warnings=[],
             evidence={"decision": manual_decision, "candidates": _candidate_summaries(candidates)},
         )
@@ -774,7 +774,7 @@ def _select_result(
             matched_fitting_id=None,
             matched_fitting_name=None,
             match_source="auto",
-            match_status="rejected",
+            match_status="no_match",
             score=getattr(top_candidate, "score", ZERO),
             hard_failures=getattr(top_candidate, "hard_failures", []),
             warnings=getattr(top_candidate, "warnings", []),

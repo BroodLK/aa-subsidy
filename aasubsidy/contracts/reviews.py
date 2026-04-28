@@ -41,7 +41,7 @@ def _bulk_display_issuer_names(entity_names: Iterable[str]) -> dict[str, str]:
 
 def _match_source_label(source: str) -> str:
     return {
-        "auto": "Exact",
+        "auto": "Auto",
         "learned_rule": "Rule",
         "forced": "Forced",
         "manual_accept": "One-off",
@@ -103,29 +103,12 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
     # CRITICAL: Convert PKs to integers (Django .values() returns strings)
     contract_pks = [int(contract["pk"]) for contract in contracts]
 
-    # DEBUG: Print to console AND collect for potential display
-    print(f"\n=== REVIEWER_TABLE DEBUG ===")
-    print(f"Processing {len(contract_pks)} contracts, first 3 PKs: {contract_pks[:3]}, type: {type(contract_pks[0])}")
-
     # Force fresh calculation and persistence for all contracts
     # This ensures matches are always up-to-date when the page loads
     if contract_pks:
         match_map = match_contracts(contract_pks, persist=True)
-        print(f"Calculated {len(match_map)} matches from match_contracts()")
-        print(f"Match map keys (first 3): {list(match_map.keys())[:3]}, type: {type(list(match_map.keys())[0]) if match_map else 'N/A'}")
-
-        for pk, result in list(match_map.items())[:3]:
-            print(f"  PK={pk}: name={result.matched_fitting_name}, source={result.match_source}, status={result.match_status}, score={result.score}")
-
-        # Check what's actually in the database
-        from ..models import DoctrineMatchResult
-        db_matches = list(DoctrineMatchResult.objects.filter(contract_id__in=contract_pks[:3]).values_list('contract_id', 'matched_fitting__name', 'match_status'))
-        print(f"Database check for first 3 PKs: {db_matches}")
     else:
         match_map = {}
-        print("No contracts to match")
-
-    print("=== END DEBUG ===\n")
     pricing_fit_ids = {
         int(result.matched_fitting_id or (result.evidence or {}).get("selected_fit_id") or 0)
         for result in match_map.values()
@@ -134,18 +117,10 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
     all_fittings_info = get_fitting_pricing_map(pricing_fit_ids)
 
     rows = []
-    debug_row_count = 0
     for contract in contracts:
         # CRITICAL: Convert to int for lookup
         contract_pk = int(contract["pk"])
         result = match_map.get(contract_pk)
-
-        # DEBUG: Log first few results
-        if debug_row_count < 3:
-            print(f"  Building row for contract PK={contract_pk} (type={type(contract_pk)}), result={'FOUND' if result else 'NONE'}")
-            if result:
-                print(f"    -> {result.matched_fitting_name}, {result.match_source}, {result.match_status}")
-            debug_row_count += 1
 
         contract_price = float(contract["price"] or 0.0)
         review_status = {1: "Approved", -1: "Rejected"}.get(contract["aasubsidy_meta__review_status"], "Pending")
@@ -172,18 +147,20 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
             if result and result.matched_fitting_name
             else evidence.get("selected_fit_name")
         ) or "No Match"
-        alt_candidates = []
-        if not result or float(result.score or 0) < 100.0:
-            alt_candidates = [name for name in candidate_names if name != selected_name]
-        doctrine_html = (
-            f'<div class="fw-semibold">{selected_name}</div>'
-            f'<div class="small text-muted">'
-            f'<span class="badge text-bg-secondary">{source_label}</span>'
-            f' <span>{result.match_status.replace("_", " ").title() if result else "Rejected"}</span>'
-            f"</div>"
-        )
-        if alt_candidates:
-            doctrine_html += f'<div class="small text-muted">Also: {", ".join(alt_candidates)}</div>'
+
+        # Simplified doctrine display
+        score = float(result.score or 0) if result else 0
+        if not result or selected_name == "No Match":
+            doctrine_html = '<div class="text-muted">No Match</div>'
+        elif score >= 100.0:
+            # Perfect match - just show the name
+            doctrine_html = f'<div>{selected_name}</div>'
+        elif score >= 90.0:
+            # Close match - show as "Close match to X"
+            doctrine_html = f'<div class="text-warning">Close match to {selected_name}</div>'
+        else:
+            # Lower score match - show with score
+            doctrine_html = f'<div class="text-warning">{selected_name} ({score:.0f}%)</div>'
 
         pct_jita = round((contract_price / basis_val) * 100, 2) if (basis_val > 0 and contract_price > 0) else 0.0
         prefill_subsidy = float(contract["aasubsidy_meta__subsidy_amount"] or 0.0) or suggested

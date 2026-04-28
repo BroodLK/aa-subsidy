@@ -89,7 +89,7 @@
 
     function formatMatchSource(source) {
       return {
-        auto: 'Exact',
+        auto: 'Auto',
         learned_rule: 'Rule',
         forced: 'Forced',
         manual_accept: 'One-off'
@@ -98,7 +98,7 @@
 
     function formatMatchStatus(status) {
       const value = String(status || '').replaceAll('_', ' ');
-      return value ? value.charAt(0).toUpperCase() + value.slice(1) : 'Rejected';
+      return value ? value.charAt(0).toUpperCase() + value.slice(1) : 'No Match';
     }
 
     function escapeHtml(value) {
@@ -128,53 +128,30 @@
       if (!row || !analysis) return;
 
       const selectedName = analysis.selected_fit_name || 'No Match';
-      const sourceLabel = formatMatchSource(analysis.match_source);
-      const statusLabel = formatMatchStatus(analysis.match_status);
-      const candidateNames = Array.isArray(analysis.candidates)
-        ? analysis.candidates.slice(0, 3).map(candidate => candidate.fit_name).filter(Boolean)
-        : [];
-      const altCandidates = Number(analysis.score || 0) >= 100
-        ? []
-        : candidateNames.filter(name => name !== selectedName);
+      const score = Number(analysis.score || 0);
 
+      // Simplified doctrine display
       const doctrineIdx = getColumnIndex('doctrine');
       if (doctrineIdx >= 0) {
         const doctrineCell = row.cells[doctrineIdx];
         const doctrineDisplay = doctrineCell.querySelector('.doctrine-display');
-        const doctrineHtml = `
-          <div class="fw-semibold">${selectedName}</div>
-          <div class="small text-muted">
-            <span class="badge text-bg-secondary">${sourceLabel}</span>
-            <span>${statusLabel}</span>
-          </div>
-          ${altCandidates.length ? `<div class="small text-muted">Also: ${altCandidates.join(', ')}</div>` : ''}
-        `;
+        let doctrineHtml = '';
+
+        if (!selectedName || selectedName === 'No Match') {
+          doctrineHtml = '<div class="text-muted">No Match</div>';
+        } else if (score >= 100.0) {
+          // Perfect match - just show the name
+          doctrineHtml = `<div>${selectedName}</div>`;
+        } else if (score >= 90.0) {
+          // Close match
+          doctrineHtml = `<div class="text-warning">Close match to ${selectedName}</div>`;
+        } else {
+          // Lower score match
+          doctrineHtml = `<div class="text-warning">${selectedName} (${score.toFixed(0)}%)</div>`;
+        }
+
         if (doctrineDisplay) doctrineDisplay.innerHTML = doctrineHtml;
-        doctrineCell.setAttribute('data-val', [selectedName, ...altCandidates].join(' '));
-      }
-
-      const sourceIdx = getColumnIndex('match_source');
-      if (sourceIdx >= 0) {
-        row.cells[sourceIdx].textContent = sourceLabel;
-        row.cells[sourceIdx].setAttribute('data-val', sourceLabel);
-      }
-
-      const scoreIdx = getColumnIndex('match_score');
-      if (scoreIdx >= 0) {
-        const scoreText = Number(analysis.score || 0).toFixed(2);
-        row.cells[scoreIdx].textContent = scoreText;
-        row.cells[scoreIdx].setAttribute('data-val', scoreText);
-      }
-
-      const warningsIdx = getColumnIndex('warning_count');
-      if (warningsIdx >= 0) {
-        const warningCount = Number(analysis.warning_count || 0);
-        const hardFailureCount = Number(analysis.hard_failure_count || 0);
-        row.cells[warningsIdx].innerHTML = `
-          <span class="${warningCount > 0 ? 'text-warning' : ''}">${warningCount}</span>
-          ${hardFailureCount > 0 ? `<span class="text-danger">/${hardFailureCount}</span>` : ''}
-        `;
-        row.cells[warningsIdx].setAttribute('data-val', String(warningCount));
+        doctrineCell.setAttribute('data-val', selectedName);
       }
 
       const reviewStatusIdx = getColumnIndex('review_status');

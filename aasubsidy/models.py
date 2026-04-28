@@ -262,11 +262,13 @@ class DoctrineQuantityTolerance(models.Model):
 class DoctrineMatchResult(models.Model):
     STATUS_MATCHED = "matched"
     STATUS_NEEDS_REVIEW = "needs_review"
-    STATUS_REJECTED = "rejected"
+    STATUS_NO_MATCH = "no_match"
+    # Legacy support
+    STATUS_REJECTED = "no_match"
     STATUS_CHOICES = (
         (STATUS_MATCHED, "Matched"),
         (STATUS_NEEDS_REVIEW, "Needs Review"),
-        (STATUS_REJECTED, "Rejected"),
+        (STATUS_NO_MATCH, "No Match"),
     )
 
     SOURCE_AUTO = "auto"

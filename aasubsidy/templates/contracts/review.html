@@ -36,9 +36,6 @@
               <th data-col="title">{% trans "Title" %}</th>
               <th data-col="station">{% trans "Station" %}</th>
               <th data-col="doctrine">{% trans "Doctrine" %}</th>
-              <th data-col="match_source">{% trans "Match" %}</th>
-              <th data-col="match_score">{% trans "Score" %}</th>
-              <th data-col="warning_count">{% trans "Warnings" %}</th>
               <th data-col="review_status">{% trans "Review_Status" %}</th>
               <th data-col="subsidy_amount">{% trans "Subsidy_Amount" %}</th>
               <th data-col="reason">{% trans "Reason" %}</th>
@@ -66,17 +63,6 @@
               <th><input class="form-control form-control-sm" data-filter="title" placeholder="..."></th>
               <th><input class="form-control form-control-sm" data-filter="station" placeholder="..."></th>
               <th><input class="form-control form-control-sm" data-filter="doctrine" placeholder="..."></th>
-              <th>
-                <select class="form-select form-select-sm" data-filter="match_source">
-                  <option value="">{% trans "All" %}</option>
-                  <option>Exact</option>
-                  <option>Rule</option>
-                  <option>Forced</option>
-                  <option>One-off</option>
-                </select>
-              </th>
-              <th><input class="form-control form-control-sm" data-filter="match_score" placeholder="..."></th>
-              <th><input class="form-control form-control-sm" data-filter="warning_count" placeholder="..."></th>
               <th>
                 <select class="form-select form-select-sm" data-filter="review_status">
                   <option value="">{% trans "All" %}</option>
@@ -138,14 +124,6 @@
                     </select>
                   </div>
                 </div>
-              </td>
-              <td data-val="{{ row.match_source }}">{{ row.match_source }}</td>
-              <td data-val="{{ row.match_score }}">{{ row.match_score|floatformat:2 }}</td>
-              <td data-val="{{ row.warning_count }}">
-                <span class="{% if row.warning_count > 0 %}text-warning{% endif %}">{{ row.warning_count }}</span>
-                {% if row.hard_failure_count > 0 %}
-                  <span class="text-danger">/{{ row.hard_failure_count }}</span>
-                {% endif %}
               </td>
               <td data-val="{{ row.review_status }}">
                 <span class="{% if row.review_status == 'Approved' %}text-success{% elif row.review_status == 'Rejected' %}text-danger{% endif %}">{{ row.review_status }}</span>
