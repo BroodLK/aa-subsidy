@@ -1148,7 +1148,9 @@ def get_or_match_contracts(
     stale_ids: list[int] = []
     for row in existing_rows:
         evidence = row.evidence or {}
-        if evidence.get("engine_version") != MATCH_ENGINE_VERSION:
+        # IMPORTANT: Don't recalculate forced matches or manual accepts even if engine version changed
+        is_manual = row.match_source in ("forced", "manual_accept", "learned_rule")
+        if not is_manual and evidence.get("engine_version") != MATCH_ENGINE_VERSION:
             stale_ids.append(int(row.contract_id))
             continue
         results[int(row.contract_id)] = _result_from_record(row)

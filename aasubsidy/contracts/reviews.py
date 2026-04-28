@@ -98,15 +98,14 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
 
     # Calculate and persist doctrine matches for all contracts before rendering
     # This ensures the doctrine column is populated on initial page load
-    from .matching import match_contracts
+    # IMPORTANT: Use get_or_match_contracts to respect forced matches and avoid recalculating
 
     # CRITICAL: Convert PKs to integers (Django .values() returns strings)
     contract_pks = [int(contract["pk"]) for contract in contracts]
 
-    # Force fresh calculation and persistence for all contracts
-    # This ensures matches are always up-to-date when the page loads
+    # Load existing matches or calculate new ones (respects forced matches)
     if contract_pks:
-        match_map = match_contracts(contract_pks, persist=True)
+        match_map = get_or_match_contracts(contract_pks, persist=True, refresh=False)
     else:
         match_map = {}
     pricing_fit_ids = {

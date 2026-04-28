@@ -136,11 +136,13 @@ def doctrine_stock_summary(
         contract_locations[cid] = locs
 
     contract_pks = list(contract_qs.values_list("pk", flat=True))
-    match_map = get_or_match_contracts(contract_pks, persist=True)
+    match_map = get_or_match_contracts(contract_pks, persist=True, refresh=False)
+    # Count all contracts that have a matched fitting, regardless of status
+    # This includes "matched", "needs_review", and even forced matches
     matched_fit_map: Dict[int, int] = {
         contract_pk: int(result.matched_fitting_id)
         for contract_pk, result in match_map.items()
-        if result.match_status == "matched" and result.matched_fitting_id
+        if result.matched_fitting_id  # Any contract with a fitting ID assigned
     }
 
     DEC_0 = DecimalField(max_digits=30, decimal_places=0)
