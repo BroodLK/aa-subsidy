@@ -173,7 +173,7 @@
           id: row.getAttribute('data-id'),
           doctrineText: (row.querySelector('.doctrine-display')?.textContent || '').trim()
         }))
-        .filter(entry => entry.id && /^no match$/i.test(entry.doctrineText));
+        .filter(entry => entry.id && /no match/i.test(entry.doctrineText));
 
       for (const target of targets) {
         try {
