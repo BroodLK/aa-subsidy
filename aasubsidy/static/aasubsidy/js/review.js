@@ -871,12 +871,17 @@
       });
     }
 
-    refreshRowSummariesOnLoad()
-      .catch((err) => {
-        console.error('Initial review summary refresh failed:', err);
-      })
-      .finally(() => {
-        hideLoading();
-      });
+    // DISABLED: Server-side rendering now provides correct match data on initial page load
+    // No need to refresh via AJAX on page load - it just overwrites the correct data!
+    // refreshRowSummariesOnLoad()
+    //   .catch((err) => {
+    //     console.error('Initial review summary refresh failed:', err);
+    //   })
+    //   .finally(() => {
+    //     hideLoading();
+    //   });
+
+    // Just hide the loading spinner immediately since data is already rendered
+    hideLoading();
   });
 })();

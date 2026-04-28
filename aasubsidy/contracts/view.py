@@ -474,11 +474,19 @@ class ReviewSummariesView(PermissionRequiredMixin, View):
 
         # Calculate and persist doctrine matches for all contracts
         contract_pks = [contract.pk for contract in contracts]
+
+        # DEBUG
+        print(f"\n=== REVIEW SUMMARIES AJAX ===")
+        print(f"Requested public IDs (first 3): {public_contract_ids[:3]}")
+        print(f"Found {len(contracts)} contracts, PKs (first 3): {contract_pks[:3]}, type: {type(contract_pks[0]) if contract_pks else 'N/A'}")
+
         results = get_or_match_contracts(contract_pks, persist=True)
+        print(f"Got {len(results)} results, keys (first 3): {list(results.keys())[:3]}, type: {type(list(results.keys())[0]) if results else 'N/A'}")
 
         # Ensure all contracts have match results
         missing_pks = [pk for pk in contract_pks if pk not in results]
         if missing_pks:
+            print(f"Missing {len(missing_pks)} results, fetching...")
             from .matching import match_contracts
             additional_results = match_contracts(missing_pks, persist=True)
             results.update(additional_results)
@@ -494,6 +502,12 @@ class ReviewSummariesView(PermissionRequiredMixin, View):
             _serialize_review_row(contract, results.get(contract.pk), pricing_fallback)
             for contract in contracts
         ]
+
+        # DEBUG: Check first row
+        if rows:
+            print(f"First row: id={rows[0].get('id')}, selected_fit_name={rows[0].get('selected_fit_name')}, match_status={rows[0].get('match_status')}")
+        print("=== END AJAX ===\n")
+
         return JsonResponse({"ok": True, "rows": rows})
 
 
