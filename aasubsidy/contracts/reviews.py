@@ -100,17 +100,19 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
     # This ensures the doctrine column is populated on initial page load
     from .matching import match_contracts
 
-    contract_pks = [contract["pk"] for contract in contracts]
+    # CRITICAL: Convert PKs to integers (Django .values() returns strings)
+    contract_pks = [int(contract["pk"]) for contract in contracts]
 
     # DEBUG: Print to console AND collect for potential display
     print(f"\n=== REVIEWER_TABLE DEBUG ===")
-    print(f"Processing {len(contract_pks)} contracts, first 3 PKs: {contract_pks[:3]}")
+    print(f"Processing {len(contract_pks)} contracts, first 3 PKs: {contract_pks[:3]}, type: {type(contract_pks[0])}")
 
     # Force fresh calculation and persistence for all contracts
     # This ensures matches are always up-to-date when the page loads
     if contract_pks:
         match_map = match_contracts(contract_pks, persist=True)
         print(f"Calculated {len(match_map)} matches from match_contracts()")
+        print(f"Match map keys (first 3): {list(match_map.keys())[:3]}, type: {type(list(match_map.keys())[0]) if match_map else 'N/A'}")
 
         for pk, result in list(match_map.items())[:3]:
             print(f"  PK={pk}: name={result.matched_fitting_name}, source={result.match_source}, status={result.match_status}, score={result.score}")
@@ -134,11 +136,13 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
     rows = []
     debug_row_count = 0
     for contract in contracts:
-        result = match_map.get(contract["pk"])
+        # CRITICAL: Convert to int for lookup
+        contract_pk = int(contract["pk"])
+        result = match_map.get(contract_pk)
 
         # DEBUG: Log first few results
         if debug_row_count < 3:
-            print(f"  Building row for contract PK={contract['pk']}, result={'FOUND' if result else 'NONE'}")
+            print(f"  Building row for contract PK={contract_pk} (type={type(contract_pk)}), result={'FOUND' if result else 'NONE'}")
             if result:
                 print(f"    -> {result.matched_fitting_name}, {result.match_source}, {result.match_status}")
             debug_row_count += 1
