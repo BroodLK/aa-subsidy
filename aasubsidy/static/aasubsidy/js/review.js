@@ -92,14 +92,54 @@
             const data = await resp.json();
             if (!resp.ok || !data.ok) throw new Error(data.error || 'Failed to load items');
 
+            const analysis = data.analysis || null;
+            const showValidation = Boolean(analysis && analysis.forced_fit_name);
+            let summaryHtml = '';
+            if (showValidation) {
+                const summaryClass = analysis.has_issues ? 'text-warning' : 'text-success';
+                const summaryText = analysis.has_issues
+                    ? `${analysis.issue_count} issue(s) found.`
+                    : 'No doctrine mismatches found.';
+                summaryHtml = `
+                    <div class="px-3 py-2 small border-bottom border-secondary ${summaryClass}">
+                        Forced doctrine: <span class="fw-semibold">${analysis.forced_fit_name}</span>
+                        <span class="ms-2">${summaryText}</span>
+                    </div>
+                `;
+            }
+
+            const renderIncluded = (item) => {
+                if (item.is_included === true) return '<i class="fas fa-check text-success"></i>';
+                if (item.is_included === false) return '<i class="fas fa-times text-danger"></i>';
+                return '<i class="fas fa-triangle-exclamation text-warning"></i>';
+            };
+
+            const renderStatus = (item) => {
+                if (item.is_missing) return '<span class="badge bg-danger">Missing</span>';
+                if (item.status === 'error') return '<span class="badge bg-danger">Wrong</span>';
+                if (item.status === 'warning') return '<span class="badge bg-warning text-dark">Check</span>';
+                return '<span class="badge bg-success">OK</span>';
+            };
+
             let html = '<table class="table table-sm table-dark mb-0 font-monospace" style="font-size: 0.8rem;">';
-            html += '<thead><tr><th>Type</th><th class="text-end">Qty</th><th class="text-center">Included</th></tr></thead><tbody>';
+            html = summaryHtml + html;
+            html += showValidation
+                ? '<thead><tr><th>Type</th><th class="text-end">Qty</th><th class="text-center">Included</th><th class="text-center">Check</th><th>Why</th></tr></thead><tbody>'
+                : '<thead><tr><th>Type</th><th class="text-end">Qty</th><th class="text-center">Included</th></tr></thead><tbody>';
             data.items.forEach(item => {
-                html += `<tr>
-                    <td>${item.name}</td>
-                    <td class="text-end">${item.qty.toLocaleString()}</td>
-                    <td class="text-center">${item.is_included ? '<i class="fas fa-check text-success"></i>' : '<i class="fas fa-times text-danger"></i>'}</td>
-                </tr>`;
+                html += showValidation
+                    ? `<tr>
+                        <td>${item.name}</td>
+                        <td class="text-end">${item.qty.toLocaleString()}</td>
+                        <td class="text-center">${renderIncluded(item)}</td>
+                        <td class="text-center">${renderStatus(item)}</td>
+                        <td class="text-wrap">${item.reason || '&mdash;'}</td>
+                    </tr>`
+                    : `<tr>
+                        <td>${item.name}</td>
+                        <td class="text-end">${item.qty.toLocaleString()}</td>
+                        <td class="text-center">${renderIncluded(item)}</td>
+                    </tr>`;
             });
             html += '</tbody></table>';
             container.innerHTML = html;

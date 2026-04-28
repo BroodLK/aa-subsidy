@@ -20,6 +20,42 @@ except Exception:
     EveMarketPrice = None
 
 
+def _force_refresh_corporate_contracts(corporation_id: int) -> dict:
+    try:
+        from corptools.tasks.corporation.contracts import corp_contract_update
+    except Exception as exc:
+        logger.warning(
+            "Corporate contract refresh unavailable for corporation %s: %s",
+            corporation_id,
+            exc,
+        )
+        return {"attempted": False, "ok": False, "error": str(exc)}
+
+    try:
+        result = corp_contract_update(corporation_id, force_refresh=True)
+        refreshed_ids = []
+        if isinstance(result, tuple) and len(result) > 1 and result[1]:
+            refreshed_ids = list(result[1])
+        logger.info(
+            "Forced corptools contract refresh for corporation %s (%s contracts queued for item refresh).",
+            corporation_id,
+            len(refreshed_ids),
+        )
+        return {
+            "attempted": True,
+            "ok": True,
+            "contracts_refreshed": len(refreshed_ids),
+        }
+    except Exception as exc:
+        logger.warning(
+            "Forced corptools contract refresh failed for corporation %s: %s",
+            corporation_id,
+            exc,
+            exc_info=True,
+        )
+        return {"attempted": True, "ok": False, "error": str(exc)}
+
+
 @shared_task(bind=True)
 def sync_fitting_requests(self, default_requested: int = 0, chunk_size: int = 1000) -> dict:
     missing_ids = list(
@@ -45,10 +81,15 @@ def import_corporate_contract_reviews(
     self,
     corporation_id: int | None = None,
     chunk_size: int = 1000,
+    force_refresh_contracts: bool = True,
 ) -> dict:
     from .models import SubsidyConfig
     if corporation_id is None:
         corporation_id = SubsidyConfig.active().corporation_id
+
+    refresh_result = {"attempted": False, "ok": False}
+    if force_refresh_contracts:
+        refresh_result = _force_refresh_corporate_contracts(corporation_id)
 
     qs = CorporateContract.objects.filter(corporation_id=corporation_id).only("id")
 
@@ -92,7 +133,12 @@ def import_corporate_contract_reviews(
     if to_exempt.exists():
         CorporateContractSubsidy.objects.filter(id__in=to_exempt.values_list("id", flat=True)).update(exempt=True)
 
-    return {"created": created, "updated": 0, "total_contracts": total}
+    return {
+        "created": created,
+        "updated": 0,
+        "total_contracts": total,
+        "contract_refresh": refresh_result,
+    }
 
 @shared_task(bind=True)
 def refresh_subsidy_item_prices(self) -> dict:

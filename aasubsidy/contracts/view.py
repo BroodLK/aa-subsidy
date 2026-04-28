@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
-from typing import List
+from typing import Any, List
 
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, PermissionRequiredMixin
@@ -20,7 +21,7 @@ from django.db.models import Sum
 from allianceauth.authentication.models import CharacterOwnership
 from allianceauth.eveonline.models import EveCharacter
 from corptools.models import CorporateContract, CorporateContractItem
-from fittings.models import Fitting
+from fittings.models import Fitting, FittingItem
 
 from ..contracts.reviews import reviewer_table
 from ..contracts.summaries import doctrine_stock_summary, doctrine_insights
@@ -573,13 +574,132 @@ class ForceFitView(PermissionRequiredMixin, View):
         return JsonResponse({"ok": True})
 
 
+def _expected_items_for_fit(fit: Fitting) -> dict[int, dict[str, Any]]:
+    expected: dict[int, dict[str, Any]] = {
+        int(fit.ship_type_type_id): {
+            "name": fit.ship_type.name,
+            "expected_qty": 1,
+        }
+    }
+
+    fitting_items = (
+        FittingItem.objects.filter(fit=fit)
+        .select_related("type_fk")
+        .values("type_id", "type_fk__name")
+        .annotate(total_qty=Sum("quantity"))
+    )
+    for item in fitting_items:
+        type_id = int(item["type_id"])
+        if type_id in expected:
+            expected[type_id]["expected_qty"] += int(item["total_qty"] or 0)
+        else:
+            expected[type_id] = {
+                "name": item["type_fk__name"] or str(type_id),
+                "expected_qty": int(item["total_qty"] or 0),
+            }
+
+    return expected
+
+
+def _analyze_items_for_forced_fit(
+    *,
+    forced_fit: Fitting,
+    item_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    expected = _expected_items_for_fit(forced_fit)
+    actual_included_qty: dict[int, int] = defaultdict(int)
+    actual_any_qty: dict[int, int] = defaultdict(int)
+    analyzed_rows: list[dict[str, Any]] = []
+    issue_count = 0
+
+    for item in item_rows:
+        type_id = int(item["type_id"])
+        qty = int(item["qty"] or 0)
+        is_included = bool(item["is_included"])
+        actual_any_qty[type_id] += qty
+        if is_included:
+            actual_included_qty[type_id] += qty
+
+        status = "ok"
+        reason = ""
+        expected_item = expected.get(type_id)
+        expected_qty = int(expected_item["expected_qty"]) if expected_item else 0
+
+        if is_included:
+            if not expected_item:
+                status = "error"
+                reason = "Unexpected included item for the forced doctrine."
+            elif qty < expected_qty:
+                status = "error"
+                reason = f"Included quantity too low: expected {expected_qty}, found {qty}."
+            elif qty > expected_qty:
+                status = "error"
+                reason = f"Included quantity too high: expected {expected_qty}, found {qty}."
+        elif expected_item:
+            status = "error"
+            reason = (
+                f"Required doctrine item is marked excluded instead of included "
+                f"(expected {expected_qty}, found excluded {qty})."
+            )
+
+        if status != "ok":
+            issue_count += 1
+
+        analyzed_rows.append(
+            {
+                "name": item["name"],
+                "type_id": type_id,
+                "qty": qty,
+                "is_included": item["is_included"],
+                "status": status,
+                "reason": reason,
+                "expected_qty": expected_qty if expected_item else None,
+                "is_missing": False,
+            }
+        )
+
+    for type_id, expected_item in expected.items():
+        if actual_included_qty.get(type_id, 0) > 0 or actual_any_qty.get(type_id, 0) > 0:
+            continue
+        issue_count += 1
+        analyzed_rows.append(
+            {
+                "name": expected_item["name"],
+                "type_id": type_id,
+                "qty": 0,
+                "is_included": None,
+                "status": "error",
+                "reason": f"Missing required doctrine item (expected {expected_item['expected_qty']}).",
+                "expected_qty": expected_item["expected_qty"],
+                "is_missing": True,
+            }
+        )
+
+    analyzed_rows.sort(
+        key=lambda row: (
+            0 if row["status"] != "ok" else 1,
+            0 if row["is_included"] is True else (1 if row["is_included"] is None else 2),
+            row["name"].lower(),
+        )
+    )
+
+    return analyzed_rows, {
+        "forced_fit_id": forced_fit.id,
+        "forced_fit_name": forced_fit.name,
+        "has_issues": issue_count > 0,
+        "issue_count": issue_count,
+    }
+
+
 class ContractItemsView(PermissionRequiredMixin, View):
     permission_required = "aasubsidy.review_subsidy"
 
     def get(self, request, contract_id: int):
         cfg = SubsidyConfig.active()
         try:
-            cc = CorporateContract.objects.get(
+            cc = CorporateContract.objects.select_related(
+                "aasubsidy_meta__forced_fitting__ship_type"
+            ).get(
                 contract_id=contract_id, corporation_id=cfg.corporation_id
             )
         except CorporateContract.DoesNotExist:
@@ -587,18 +707,27 @@ class ContractItemsView(PermissionRequiredMixin, View):
 
         items = (
             CorporateContractItem.objects.filter(contract_id=cc.pk)
-            .values("type_name__name", "is_included")
+            .values("type_name_id", "type_name__name", "is_included")
             .annotate(total_qty=Sum("quantity"))
             .order_by("-is_included", "type_name__name")
         )
 
         results = [
             {
-                "name": item["type_name__name"],
+                "name": item["type_name__name"] or str(item["type_name_id"]),
+                "type_id": int(item["type_name_id"]),
                 "qty": item["total_qty"],
                 "is_included": item["is_included"],
             }
             for item in items
         ]
 
-        return JsonResponse({"ok": True, "items": results})
+        analysis = None
+        forced_fit = getattr(getattr(cc, "aasubsidy_meta", None), "forced_fitting", None)
+        if forced_fit:
+            results, analysis = _analyze_items_for_forced_fit(
+                forced_fit=forced_fit,
+                item_rows=results,
+            )
+
+        return JsonResponse({"ok": True, "items": results, "analysis": analysis})
