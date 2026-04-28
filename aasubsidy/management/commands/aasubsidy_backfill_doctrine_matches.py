@@ -10,6 +10,7 @@ from django.utils.dateparse import parse_date, parse_datetime
 
 from corptools.models import CorporateContract
 
+from aasubsidy.contracts.filters import apply_contract_exclusions
 from aasubsidy.contracts.matching import match_contracts
 from aasubsidy.models import SubsidyConfig
 
@@ -106,7 +107,9 @@ class Command(BaseCommand):
         if contract_id_start and contract_id_end and int(contract_id_start) > int(contract_id_end):
             raise CommandError("--contract-id-start cannot be greater than --contract-id-end.")
 
+        cfg = SubsidyConfig.active()
         qs = CorporateContract.objects.filter(corporation_id=corporation_id).order_by("id")
+        qs = apply_contract_exclusions(qs, cfg)
         if date_from is not None:
             qs = qs.filter(date_issued__gte=date_from)
         if date_to is not None:

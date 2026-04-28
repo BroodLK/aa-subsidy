@@ -398,6 +398,12 @@ class SubsidyConfig(models.Model):
     rounding_increment = models.IntegerField(default=250000, help_text="ISK rounding increment")
     deleted_check = models.BooleanField(default=True)
     corporation_id = models.IntegerField(default=1, help_text="The ID of the corporation whose contracts should be subsidized")
+    ignore_zero_isk_contracts = models.BooleanField(default=True, help_text="Ignore zero-ISK contracts in subsidy workflows")
+    ignored_contract_title_patterns = models.TextField(
+        blank=True,
+        default="INDY-*",
+        help_text="One wildcard pattern per line. Use * to match any sequence.",
+    )
 
     class Meta:
         verbose_name = "Subsidy Configuration"

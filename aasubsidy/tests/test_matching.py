@@ -1,0 +1,199 @@
+import unittest
+from decimal import Decimal
+
+from aasubsidy.contracts.matching import (
+    ContractItemData,
+    FittingDefinition,
+    ItemRuleData,
+    MatchProfileData,
+    QuantityToleranceData,
+    SubstitutionRuleData,
+    TypeInfo,
+    _select_result,
+    evaluate_contract_against_definition,
+)
+
+
+def _profile(*, fitting_id=1, **overrides):
+    return MatchProfileData(fitting_id=fitting_id, **overrides)
+
+
+def _fit_definition(*, fitting_id=1, name="Test Fit", ship_type_id=100, rules=None, substitutions=None, tolerances=None, profile=None, type_info=None):
+    profile = profile or _profile(fitting_id=fitting_id)
+    return FittingDefinition(
+        fitting_id=fitting_id,
+        fitting_name=name,
+        ship_type_id=ship_type_id,
+        ship_type_name="Hull",
+        profile=profile,
+        item_rules=rules or [],
+        substitutions=substitutions or [],
+        quantity_tolerances=tolerances or {},
+        type_info=type_info or {},
+    )
+
+
+class TestDoctrineMatching(unittest.TestCase):
+    def test_exact_fit_matches(self):
+        fit = _fit_definition(
+            rules=[
+                ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
+                ItemRuleData(200, "Module", expected_quantity=1),
+            ],
+            type_info={
+                100: TypeInfo(100, "Hull"),
+                200: TypeInfo(200, "Module"),
+            },
+        )
+        contract = {
+            100: ContractItemData(100, "Hull", included_qty=1),
+            200: ContractItemData(200, "Module", included_qty=1),
+        }
+
+        result = evaluate_contract_against_definition(contract, fit)
+
+        self.assertEqual(result.score, Decimal("100.00"))
+        self.assertTrue(result.exact_match)
+        self.assertEqual(result.hard_failures, [])
+        self.assertEqual(result.source_hint, "auto")
+
+    def test_wrong_hull_never_matches(self):
+        fit = _fit_definition(
+            rules=[ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000)],
+            type_info={100: TypeInfo(100, "Hull")},
+        )
+        contract = {101: ContractItemData(101, "Other Hull", included_qty=1)}
+
+        result = evaluate_contract_against_definition(contract, fit)
+
+        self.assertTrue(any(issue["code"] in {"missing_required", "wrong_hull"} for issue in result.hard_failures))
+        self.assertFalse(result.viable)
+
+    def test_missing_required_module_blocks_match(self):
+        fit = _fit_definition(
+            rules=[
+                ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
+                ItemRuleData(200, "Module", expected_quantity=1),
+            ],
+            type_info={100: TypeInfo(100, "Hull"), 200: TypeInfo(200, "Module")},
+        )
+        contract = {100: ContractItemData(100, "Hull", included_qty=1)}
+
+        result = evaluate_contract_against_definition(contract, fit)
+
+        self.assertTrue(any(issue["code"] == "missing_required" for issue in result.hard_failures))
+        self.assertFalse(result.viable)
+
+    def test_extra_cargo_allowed_when_profile_says_so(self):
+        fit = _fit_definition(
+            profile=_profile(fitting_id=1, allow_extra_items=True),
+            rules=[
+                ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
+                ItemRuleData(200, "Module", expected_quantity=1),
+            ],
+            type_info={
+                100: TypeInfo(100, "Hull"),
+                200: TypeInfo(200, "Module"),
+                300: TypeInfo(300, "Ammo"),
+            },
+        )
+        contract = {
+            100: ContractItemData(100, "Hull", included_qty=1),
+            200: ContractItemData(200, "Module", included_qty=1),
+            300: ContractItemData(300, "Ammo", included_qty=200),
+        }
+
+        result = evaluate_contract_against_definition(contract, fit)
+
+        self.assertEqual(result.hard_failures, [])
+        self.assertTrue(any(issue["code"] == "unexpected_extra_item" for issue in result.warnings))
+
+    def test_ammo_quantity_within_tolerance_matches_with_warning(self):
+        fit = _fit_definition(
+            rules=[
+                ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
+                ItemRuleData(400, "Ammo", expected_quantity=3200, category="ammo"),
+            ],
+            tolerances={400: [QuantityToleranceData(400, mode="extra_only", lower_bound=0, upper_bound=1000, penalty_points=Decimal("2.00"))]},
+            type_info={100: TypeInfo(100, "Hull"), 400: TypeInfo(400, "Ammo")},
+        )
+        contract = {
+            100: ContractItemData(100, "Hull", included_qty=1),
+            400: ContractItemData(400, "Ammo", included_qty=4000),
+        }
+
+        result = evaluate_contract_against_definition(contract, fit)
+
+        self.assertEqual(result.hard_failures, [])
+        self.assertTrue(any(issue["code"] == "quantity_tolerance" for issue in result.warnings))
+        self.assertEqual(result.score, Decimal("98.00"))
+
+    def test_specific_substitute_matches_with_penalty(self):
+        fit = _fit_definition(
+            rules=[
+                ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
+                ItemRuleData(500, "T2 Module", expected_quantity=1),
+            ],
+            substitutions=[SubstitutionRuleData(expected_type_id=500, allowed_type_id=501, rule_type="specific", penalty_points=Decimal("4.00"))],
+            type_info={
+                100: TypeInfo(100, "Hull"),
+                500: TypeInfo(500, "T2 Module", group_id=10),
+                501: TypeInfo(501, "Compact Module", group_id=10),
+            },
+        )
+        contract = {
+            100: ContractItemData(100, "Hull", included_qty=1),
+            501: ContractItemData(501, "Compact Module", included_qty=1),
+        }
+
+        result = evaluate_contract_against_definition(contract, fit)
+
+        self.assertEqual(result.hard_failures, [])
+        self.assertTrue(any(issue["code"] == "substitution" for issue in result.warnings))
+        self.assertEqual(result.score, Decimal("96.00"))
+        self.assertEqual(result.source_hint, "learned_rule")
+
+    def test_forced_fit_and_rerun_keep_same_analysis(self):
+        fit = _fit_definition(
+            rules=[
+                ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
+                ItemRuleData(500, "T2 Module", expected_quantity=1),
+            ],
+            substitutions=[SubstitutionRuleData(expected_type_id=500, allowed_type_id=501, rule_type="specific", penalty_points=Decimal("4.00"))],
+            type_info={
+                100: TypeInfo(100, "Hull"),
+                500: TypeInfo(500, "T2 Module", group_id=10),
+                501: TypeInfo(501, "Compact Module", group_id=10),
+            },
+        )
+        contract = {
+            100: ContractItemData(100, "Hull", included_qty=1),
+            501: ContractItemData(501, "Compact Module", included_qty=1),
+        }
+        candidate = evaluate_contract_against_definition(contract, fit)
+
+        forced = _select_result(contract_id=1, candidates=[candidate], forced_fit_id=1, manual_decision=None)
+        rerun = _select_result(contract_id=1, candidates=[candidate], forced_fit_id=None, manual_decision=None)
+
+        self.assertEqual(forced.matched_fitting_id, rerun.matched_fitting_id)
+        self.assertEqual(forced.score, rerun.score)
+        self.assertEqual(forced.hard_failures, rerun.hard_failures)
+        self.assertEqual(forced.warnings, rerun.warnings)
+
+    def test_forced_fit_fallback_keeps_fit_name(self):
+        forced = _select_result(
+            contract_id=1,
+            candidates=[],
+            forced_fit_id=77,
+            forced_fit_name="Forced Doctrine",
+            manual_decision=None,
+        )
+
+        self.assertEqual(forced.matched_fitting_id, 77)
+        self.assertEqual(forced.matched_fitting_name, "Forced Doctrine")
+        self.assertEqual(forced.match_source, "forced")
+        self.assertEqual(forced.match_status, "needs_review")
+
+
+if __name__ == "__main__":
+    unittest.main()

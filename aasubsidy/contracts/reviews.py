@@ -10,6 +10,7 @@ from eveuniverse.models import EveEntity, EveType
 from fittings.models import Fitting, FittingItem
 from corptools.models import CorporateContract
 
+from .filters import apply_contract_exclusions
 from .matching import get_or_match_contracts
 from .summaries import INCR
 from ..helpers.db import Ceil, Round
@@ -63,6 +64,7 @@ def _match_source_label(source: str) -> str:
 
 
 def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = None):
+    cfg_model = SubsidyConfig.active()
     cfg = _cfg()
     if corporation_id is None:
         corporation_id = cfg.get("corporation_id")
@@ -90,6 +92,7 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
         pk__in=base_subsidies.values("contract_id"),
         corporation_id=corporation_id if corporation_id is not None else F("corporation_id"),
     )
+    base_contracts = apply_contract_exclusions(base_contracts, cfg_model)
 
     fi_for_fit = FittingItem.objects.filter(fit_id=OuterRef("pk")).values("fit_id")
     items_basis_fit = (

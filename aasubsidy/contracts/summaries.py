@@ -20,6 +20,7 @@ from django.db.models.functions import Coalesce
 
 from eveuniverse.models import EveType
 from fittings.models import Fitting, FittingItem, Doctrine
+from .filters import apply_contract_exclusions
 from ..helpers.db import Ceil, Round
 from ..models import (
     FittingClaim,
@@ -60,6 +61,7 @@ def doctrine_stock_summary(
     statuses: Tuple[str, ...] | None = ("outstanding",),
     request_user_id: int | None = None,
 ):
+    cfg_model = SubsidyConfig.active()
     cfg = _cfg()
     if corporation_id is None:
         corporation_id = cfg["corporation_id"]
@@ -91,6 +93,7 @@ def doctrine_stock_summary(
         )
         .select_related("start_location_name__system")
     )
+    contract_qs = apply_contract_exclusions(contract_qs, cfg_model)
 
     # Use values to avoid object overhead and ensure we get the IDs correctly
     contract_data = list(
@@ -453,6 +456,7 @@ def doctrine_stock_summary(
 def doctrine_insights(corporation_id: int | None = None):
     from .payments import _user_id_for_issuer_eve_id, _main_name_for_user_id
 
+    cfg_model = SubsidyConfig.active()
     cfg = _cfg()
     if corporation_id is None:
         corporation_id = cfg["corporation_id"]
@@ -474,6 +478,7 @@ def doctrine_insights(corporation_id: int | None = None):
         .select_related("issuer_name", "start_location_name", "aasubsidy_meta")
         .order_by("date_issued")
     )
+    slow_contracts_qs = apply_contract_exclusions(slow_contracts_qs, cfg_model)
 
     all_contracts = list(slow_contracts_qs)
 
@@ -492,6 +497,7 @@ def doctrine_insights(corporation_id: int | None = None):
         .select_related("issuer_name", "start_location_name", "aasubsidy_meta")
         .order_by("-date_expired")
     )
+    expired_contracts_qs = apply_contract_exclusions(expired_contracts_qs, cfg_model)
     all_contracts += list(expired_contracts_qs)
 
     sold_contracts_qs = (
@@ -502,6 +508,7 @@ def doctrine_insights(corporation_id: int | None = None):
         )
         .select_related("issuer_name", "start_location_name", "aasubsidy_meta")
     )
+    sold_contracts_qs = apply_contract_exclusions(sold_contracts_qs, cfg_model)
     all_contracts += list(sold_contracts_qs)
 
     contract_pks = [c.id for c in all_contracts]

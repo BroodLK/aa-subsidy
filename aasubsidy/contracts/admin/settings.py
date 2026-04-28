@@ -4,7 +4,9 @@ from django.urls import reverse
 from django.views import View
 from django.contrib import messages
 from decimal import Decimal, InvalidOperation
+
 from aasubsidy.models import SubsidyConfig
+
 
 class SubsidySettingsAdminView(PermissionRequiredMixin, View):
     permission_required = "aasubsidy.subsidy_admin"
@@ -21,13 +23,27 @@ class SubsidySettingsAdminView(PermissionRequiredMixin, View):
         m3_raw = request.POST.get("cost_per_m3") or "250"
         incr_raw = request.POST.get("rounding_increment") or "250000"
         corp_id_raw = request.POST.get("corporation_id") or "1"
+        ignore_zero_isk_contracts = request.POST.get("ignore_zero_isk_contracts") == "on"
+        ignored_contract_title_patterns = (request.POST.get("ignored_contract_title_patterns") or "").strip()
         try:
             cfg.price_basis = "buy" if basis == "buy" else "sell"
             cfg.pct_over_basis = Decimal(pct_raw)
             cfg.cost_per_m3 = Decimal(m3_raw)
             cfg.rounding_increment = int(incr_raw)
             cfg.corporation_id = int(corp_id_raw)
-            cfg.save(update_fields=["price_basis", "pct_over_basis", "cost_per_m3", "rounding_increment", "corporation_id"])
+            cfg.ignore_zero_isk_contracts = ignore_zero_isk_contracts
+            cfg.ignored_contract_title_patterns = ignored_contract_title_patterns
+            cfg.save(
+                update_fields=[
+                    "price_basis",
+                    "pct_over_basis",
+                    "cost_per_m3",
+                    "rounding_increment",
+                    "corporation_id",
+                    "ignore_zero_isk_contracts",
+                    "ignored_contract_title_patterns",
+                ]
+            )
             messages.success(request, "Subsidy settings saved.")
         except (InvalidOperation, ValueError):
             messages.error(request, "Invalid values provided. Please review and try again.")

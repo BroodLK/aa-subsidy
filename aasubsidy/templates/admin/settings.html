@@ -43,6 +43,23 @@
             <input type="number" step="1" min="1" name="corporation_id" class="form-control themable-input" value="{{ cfg.corporation_id }}">
             <div class="form-text">{% trans "The ID of the corporation whose contracts should be subsidized." %}</div>
           </div>
+          <div class="col-12 col-md-6">
+            <div class="form-check mt-4">
+              <input class="form-check-input" type="checkbox" name="ignore_zero_isk_contracts" id="ignoreZeroIskContracts" {% if cfg.ignore_zero_isk_contracts %}checked{% endif %}>
+              <label class="form-check-label" for="ignoreZeroIskContracts">{% trans "Ignore zero-ISK contracts" %}</label>
+            </div>
+            <div class="form-text">{% trans "Contracts priced at 0 ISK will be excluded from subsidy matching and review." %}</div>
+          </div>
+          <div class="col-12">
+            <label class="form-label">{% trans "Ignored Contract Title Patterns" %}</label>
+            <textarea
+              name="ignored_contract_title_patterns"
+              class="form-control themable-input"
+              rows="6"
+              spellcheck="false"
+            >{{ cfg.ignored_contract_title_patterns }}</textarea>
+            <div class="form-text">{% trans "One wildcard pattern per line. Use * as the wildcard. Example: INDY-*" %}</div>
+          </div>
         </div>
         <div class="mt-3">
           <button class="btn btn-primary" type="submit">{% trans "Save" %}</button>

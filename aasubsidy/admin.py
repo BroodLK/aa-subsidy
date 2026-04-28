@@ -18,8 +18,14 @@ class SubsidyAdminMixin:
 
 @admin.register(SubsidyConfig)
 class SubsidyConfigAdmin(SubsidyAdminMixin, admin.ModelAdmin):
-    list_display = ("price_basis", "pct_over_basis", "cost_per_m3", "rounding_increment")
-    list_editable = ("pct_over_basis", "cost_per_m3", "rounding_increment")
+    list_display = (
+        "price_basis",
+        "pct_over_basis",
+        "cost_per_m3",
+        "rounding_increment",
+        "ignore_zero_isk_contracts",
+    )
+    list_editable = ("pct_over_basis", "cost_per_m3", "rounding_increment", "ignore_zero_isk_contracts")
     radio_fields = {"price_basis": admin.HORIZONTAL}
 
     def has_view_permission(self, request, obj=None):
