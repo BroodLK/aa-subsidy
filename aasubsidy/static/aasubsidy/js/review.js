@@ -255,20 +255,33 @@
         .filter(Boolean);
       if (!ids.length) return;
 
-      const url = `${window.AASubsidyConfig.reviewSummariesUrl}?contract_ids=${encodeURIComponent(ids.join(','))}`;
-      const resp = await fetch(url, {
-        headers: { 'X-Requested-With': 'XMLHttpRequest' }
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok || !data.ok) {
-        throw new Error(data.error || 'Failed to load review summaries');
+      // Batch requests to avoid URL length limits (max ~50 IDs per request)
+      const batchSize = 50;
+      const batches = [];
+      for (let i = 0; i < ids.length; i += batchSize) {
+        batches.push(ids.slice(i, i + batchSize));
       }
 
-      (data.rows || []).forEach(summary => {
-        if (summary && summary.id) {
-          updateContractRow(String(summary.id), summary);
+      console.log(`Fetching summaries for ${ids.length} contracts in ${batches.length} batches`);
+
+      for (const batch of batches) {
+        const url = `${window.AASubsidyConfig.reviewSummariesUrl}?contract_ids=${encodeURIComponent(batch.join(','))}`;
+        const resp = await fetch(url, {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data.ok) {
+          console.error(`Failed to load batch: ${data.error || 'Unknown error'}`);
+          continue; // Skip failed batches but continue with others
         }
-      });
+
+        (data.rows || []).forEach(summary => {
+          if (summary && summary.id) {
+            updateContractRow(String(summary.id), summary);
+          }
+        });
+      }
+
       applyFilters();
     }
 

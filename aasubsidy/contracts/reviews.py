@@ -132,8 +132,17 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
     all_fittings_info = get_fitting_pricing_map(pricing_fit_ids)
 
     rows = []
+    debug_row_count = 0
     for contract in contracts:
         result = match_map.get(contract["pk"])
+
+        # DEBUG: Log first few results
+        if debug_row_count < 3:
+            print(f"  Building row for contract PK={contract['pk']}, result={'FOUND' if result else 'NONE'}")
+            if result:
+                print(f"    -> {result.matched_fitting_name}, {result.match_source}, {result.match_status}")
+            debug_row_count += 1
+
         contract_price = float(contract["price"] or 0.0)
         review_status = {1: "Approved", -1: "Rejected"}.get(contract["aasubsidy_meta__review_status"], "Pending")
 
