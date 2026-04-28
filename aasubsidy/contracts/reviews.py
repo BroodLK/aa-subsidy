@@ -99,14 +99,22 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
     # Calculate and persist doctrine matches for all contracts before rendering
     # This ensures the doctrine column is populated on initial page load
     from .matching import match_contracts
+    import logging
+    logger = logging.getLogger(__name__)
+
     contract_pks = [contract["pk"] for contract in contracts]
+    logger.info(f"reviewer_table: Processing {len(contract_pks)} contracts: {contract_pks[:5]}...")
 
     # Force fresh calculation and persistence for all contracts
     # This ensures matches are always up-to-date when the page loads
     if contract_pks:
         match_map = match_contracts(contract_pks, persist=True)
+        logger.info(f"reviewer_table: Calculated {len(match_map)} matches")
+        for pk, result in list(match_map.items())[:3]:
+            logger.info(f"  Contract {pk}: {result.matched_fitting_name}, source={result.match_source}, status={result.match_status}")
     else:
         match_map = {}
+        logger.info("reviewer_table: No contracts to match")
     pricing_fit_ids = {
         int(result.matched_fitting_id or (result.evidence or {}).get("selected_fit_id") or 0)
         for result in match_map.values()
