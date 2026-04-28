@@ -29,7 +29,7 @@ from ..models import (
     DoctrineSystem,
 )
 from corptools.models import CorporateContract
-from .matching import match_contracts
+from .matching import get_or_match_contracts
 from allianceauth.eveonline.models import EveCharacter
 
 INCR = 250_000
@@ -133,7 +133,7 @@ def doctrine_stock_summary(
         contract_locations[cid] = locs
 
     contract_pks = list(contract_qs.values_list("pk", flat=True))
-    match_map = match_contracts(contract_pks, persist=False)
+    match_map = get_or_match_contracts(contract_pks, persist=True)
     matched_fit_map: Dict[int, int] = {
         contract_pk: int(result.matched_fitting_id)
         for contract_pk, result in match_map.items()
@@ -505,7 +505,7 @@ def doctrine_insights(corporation_id: int | None = None):
     all_contracts += list(sold_contracts_qs)
 
     contract_pks = [c.id for c in all_contracts]
-    match_map = match_contracts(contract_pks, persist=False)
+    match_map = get_or_match_contracts(contract_pks, persist=True)
     contract_titles = {}
     contract_fit_pk = {}
     valid_contract_ids = set()

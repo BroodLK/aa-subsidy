@@ -22,7 +22,7 @@ from allianceauth.eveonline.models import EveCharacter
 from corptools.models import CorporateContract, CorporateContractItem
 from fittings.models import Fitting
 
-from ..contracts.matching import match_contract
+from ..contracts.matching import get_or_match_contract, match_contract
 from ..contracts.reviews import reviewer_table
 from ..contracts.summaries import doctrine_stock_summary, doctrine_insights
 from ..models import (
@@ -618,7 +618,7 @@ class MatchPreviewView(PermissionRequiredMixin, View):
         except CorporateContract.DoesNotExist:
             return JsonResponse({"ok": False, "error": "not_found"}, status=404)
 
-        result = match_contract(cc.pk, persist=False)
+        result = get_or_match_contract(cc.pk, persist=True)
         return JsonResponse({"ok": True, "match": _serialize_match_result(result, include_items=True)})
 
 
@@ -641,7 +641,7 @@ class AcceptOnceView(PermissionRequiredMixin, View):
         fit_id_raw = (request.POST.get("fit_id") or "").strip()
         fit_id = int(fit_id_raw) if fit_id_raw.isdigit() else getattr(meta, "forced_fitting_id", None)
         if not fit_id:
-            preview = match_contract(cc.pk, persist=False)
+            preview = get_or_match_contract(cc.pk, persist=True)
             fit_id = preview.matched_fitting_id or preview.evidence.get("selected_fit_id")
         if not fit_id:
             return JsonResponse({"ok": False, "error": "fit_required"}, status=400)
@@ -804,7 +804,7 @@ class ContractItemsView(PermissionRequiredMixin, View):
         except CorporateContract.DoesNotExist:
             return JsonResponse({"ok": False, "error": "not_found"}, status=404)
 
-        result = match_contract(cc.pk, persist=True)
+        result = get_or_match_contract(cc.pk, persist=True)
         analysis = _serialize_match_result(result, include_items=True)
         items = []
         for row in analysis.get("items", []):

@@ -10,7 +10,7 @@ from eveuniverse.models import EveEntity, EveType
 from fittings.models import Fitting, FittingItem
 from corptools.models import CorporateContract
 
-from .matching import match_contracts
+from .matching import get_or_match_contracts
 from .summaries import INCR
 from ..helpers.db import Ceil, Round
 from ..models import CorporateContractSubsidy, SubsidyConfig, SubsidyItemPrice
@@ -224,7 +224,7 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
         .values("pk", "name", "basis_total", "total_vol", "suggested")
     }
 
-    match_map = match_contracts([contract["pk"] for contract in contracts], persist=True)
+    match_map = get_or_match_contracts([contract["pk"] for contract in contracts], persist=True)
 
     rows = []
     for contract in contracts:

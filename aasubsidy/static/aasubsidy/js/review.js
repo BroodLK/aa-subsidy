@@ -1,6 +1,6 @@
 (function() {
   const onReady = (fn) => (document.readyState !== 'loading') ? fn() : document.addEventListener('DOMContentLoaded', fn);
-  onReady(async () => {
+  onReady(() => {
     const overlay = document.getElementById('loadingOverlay');
     const showLoading = () => { if (overlay) overlay.style.display = 'block'; };
     const hideLoading = () => { if (overlay) overlay.style.display = 'none'; };
@@ -151,36 +151,6 @@
           ${hardFailureCount > 0 ? `<span class="text-danger">/${hardFailureCount}</span>` : ''}
         `;
         row.cells[warningsIdx].setAttribute('data-val', String(warningCount));
-      }
-    }
-
-    async function refreshMatchPreview(id) {
-      const url = window.AASubsidyConfig.matchPreviewUrl.replace("/0/", `/${id}/`);
-      const resp = await fetch(url, { headers: { "X-Requested-With": "XMLHttpRequest" } });
-      const data = await resp.json();
-      if (!resp.ok || !data.ok || !data.match) {
-        throw new Error((data && data.error) ? data.error : 'match_preview_failed');
-      }
-      updateContractRow(id, data.match);
-      return data.match;
-    }
-
-    async function refreshUnmatchedRowsOnLoad() {
-      const rows = Array.from(document.querySelectorAll('.contract-row'));
-      const targets = rows
-        .map(row => ({
-          row,
-          id: row.getAttribute('data-id'),
-          doctrineText: (row.querySelector('.doctrine-display')?.textContent || '').trim()
-        }))
-        .filter(entry => entry.id && /no match/i.test(entry.doctrineText));
-
-      for (const target of targets) {
-        try {
-          await refreshMatchPreview(target.id);
-        } catch (_) {
-          // Leave the server-rendered row in place if preview refresh fails.
-        }
       }
     }
 
@@ -764,7 +734,6 @@
       });
     }
 
-    await refreshUnmatchedRowsOnLoad();
     hideLoading();
   });
 })();

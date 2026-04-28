@@ -9,6 +9,7 @@ from typing import Any, Iterable
 
 MAX_SCORE = Decimal("100.00")
 ZERO = Decimal("0.00")
+MATCH_ENGINE_VERSION = 2
 
 
 @dataclass(slots=True)
@@ -1071,6 +1072,8 @@ def _persist_results(results: list[MatchResultData]) -> None:
     to_create = []
     to_update = []
     for result in results:
+        evidence = dict(result.evidence or {})
+        evidence["engine_version"] = MATCH_ENGINE_VERSION
         payload = {
             "matched_fitting_id": result.matched_fitting_id,
             "match_source": result.match_source,
@@ -1078,7 +1081,7 @@ def _persist_results(results: list[MatchResultData]) -> None:
             "score": result.score,
             "hard_failures_json": json.dumps(result.hard_failures),
             "warnings_json": json.dumps(result.warnings),
-            "evidence_json": json.dumps(result.evidence),
+            "evidence_json": json.dumps(evidence),
             "updated_at": now,
         }
         current = existing.get(result.contract_id)
@@ -1104,6 +1107,66 @@ def _persist_results(results: list[MatchResultData]) -> None:
                 "updated_at",
             ],
         )
+
+
+def _result_from_record(record) -> MatchResultData:
+    evidence = record.evidence or {}
+    matched_fitting_name = None
+    if getattr(record, "matched_fitting_id", None):
+        matched_fitting = getattr(record, "matched_fitting", None)
+        matched_fitting_name = getattr(matched_fitting, "name", None) or evidence.get("selected_fit_name")
+    return MatchResultData(
+        contract_id=int(record.contract_id),
+        matched_fitting_id=int(record.matched_fitting_id) if record.matched_fitting_id else None,
+        matched_fitting_name=matched_fitting_name,
+        match_source=record.match_source,
+        match_status=record.match_status,
+        score=_decimal(record.score),
+        hard_failures=record.hard_failures,
+        warnings=record.warnings,
+        evidence=evidence,
+    )
+
+
+def get_or_match_contracts(
+    contract_ids: Iterable[int],
+    *,
+    persist: bool = True,
+    refresh: bool = False,
+) -> dict[int, MatchResultData]:
+    refs = _model_refs()
+    DoctrineMatchResult = refs["DoctrineMatchResult"]
+
+    contract_ids = [int(contract_id) for contract_id in contract_ids if contract_id]
+    if not contract_ids:
+        return {}
+
+    if refresh:
+        return match_contracts(contract_ids, persist=persist)
+
+    existing_rows = DoctrineMatchResult.objects.filter(contract_id__in=contract_ids).select_related("matched_fitting")
+    results: dict[int, MatchResultData] = {}
+    stale_ids: list[int] = []
+    for row in existing_rows:
+        evidence = row.evidence or {}
+        if evidence.get("engine_version") != MATCH_ENGINE_VERSION:
+            stale_ids.append(int(row.contract_id))
+            continue
+        results[int(row.contract_id)] = _result_from_record(row)
+    missing_ids = [contract_id for contract_id in contract_ids if contract_id not in results and contract_id not in stale_ids]
+    refresh_ids = stale_ids + missing_ids
+    if refresh_ids:
+        results.update(match_contracts(refresh_ids, persist=persist))
+    return {contract_id: results[contract_id] for contract_id in contract_ids if contract_id in results}
+
+
+def get_or_match_contract(
+    contract_id: int,
+    *,
+    persist: bool = True,
+    refresh: bool = False,
+) -> MatchResultData:
+    return get_or_match_contracts([int(contract_id)], persist=persist, refresh=refresh)[int(contract_id)]
 
 
 def match_contracts(
