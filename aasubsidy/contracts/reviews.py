@@ -248,7 +248,11 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
         source_label = _match_source_label(match_source)
         warning_count = len(result.warnings) if result else 0
         hard_failure_count = len(result.hard_failures) if result else 0
-        selected_name = result.matched_fitting_name if result and result.matched_fitting_name else "No Match"
+        selected_name = (
+            result.matched_fitting_name
+            if result and result.matched_fitting_name
+            else evidence.get("selected_fit_name")
+        ) or "No Match"
         alt_candidates = [name for name in candidate_names if name != selected_name]
         doctrine_html = (
             f'<div class="fw-semibold">{selected_name}</div>'

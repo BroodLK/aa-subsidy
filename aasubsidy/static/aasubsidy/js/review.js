@@ -82,6 +82,78 @@
 
     setupRowClickHandlers();
 
+    function getColumnIndex(key) {
+      const headers = Array.from(document.querySelectorAll('#contractsTable thead tr:first-child th'));
+      return headers.findIndex(th => th.getAttribute('data-col') === key);
+    }
+
+    function formatMatchSource(source) {
+      return {
+        auto: 'Exact',
+        learned_rule: 'Rule',
+        forced: 'Forced',
+        manual_accept: 'One-off'
+      }[source] || String(source || '').replaceAll('_', ' ');
+    }
+
+    function formatMatchStatus(status) {
+      const value = String(status || '').replaceAll('_', ' ');
+      return value ? value.charAt(0).toUpperCase() + value.slice(1) : 'Rejected';
+    }
+
+    function updateContractRow(id, analysis) {
+      const row = document.querySelector(`.contract-row[data-id="${id}"]`);
+      if (!row || !analysis) return;
+
+      const selectedName = analysis.selected_fit_name || 'No Match';
+      const sourceLabel = formatMatchSource(analysis.match_source);
+      const statusLabel = formatMatchStatus(analysis.match_status);
+      const candidateNames = Array.isArray(analysis.candidates)
+        ? analysis.candidates.slice(0, 3).map(candidate => candidate.fit_name).filter(Boolean)
+        : [];
+      const altCandidates = candidateNames.filter(name => name !== selectedName);
+
+      const doctrineIdx = getColumnIndex('doctrine');
+      if (doctrineIdx >= 0) {
+        const doctrineCell = row.cells[doctrineIdx];
+        const doctrineDisplay = doctrineCell.querySelector('.doctrine-display');
+        const doctrineHtml = `
+          <div class="fw-semibold">${selectedName}</div>
+          <div class="small text-muted">
+            <span class="badge text-bg-secondary">${sourceLabel}</span>
+            <span>${statusLabel}</span>
+          </div>
+          ${altCandidates.length ? `<div class="small text-muted">Also: ${altCandidates.join(', ')}</div>` : ''}
+        `;
+        if (doctrineDisplay) doctrineDisplay.innerHTML = doctrineHtml;
+        doctrineCell.setAttribute('data-val', [selectedName, ...altCandidates].join(' '));
+      }
+
+      const sourceIdx = getColumnIndex('match_source');
+      if (sourceIdx >= 0) {
+        row.cells[sourceIdx].textContent = sourceLabel;
+        row.cells[sourceIdx].setAttribute('data-val', sourceLabel);
+      }
+
+      const scoreIdx = getColumnIndex('match_score');
+      if (scoreIdx >= 0) {
+        const scoreText = Number(analysis.score || 0).toFixed(2);
+        row.cells[scoreIdx].textContent = scoreText;
+        row.cells[scoreIdx].setAttribute('data-val', scoreText);
+      }
+
+      const warningsIdx = getColumnIndex('warning_count');
+      if (warningsIdx >= 0) {
+        const warningCount = Number(analysis.warning_count || 0);
+        const hardFailureCount = Number(analysis.hard_failure_count || 0);
+        row.cells[warningsIdx].innerHTML = `
+          <span class="${warningCount > 0 ? 'text-warning' : ''}">${warningCount}</span>
+          ${hardFailureCount > 0 ? `<span class="text-danger">/${hardFailureCount}</span>` : ''}
+        `;
+        row.cells[warningsIdx].setAttribute('data-val', String(warningCount));
+      }
+    }
+
     async function loadContractItems(id) {
         const container = document.querySelector(`.items-container[data-id="${id}"]`);
         if (container.getAttribute('data-loaded') === 'true') return;
@@ -181,6 +253,9 @@
             html += '</tbody></table>';
             container.innerHTML = html;
             container.setAttribute('data-loaded', 'true');
+            if (analysis) {
+                updateContractRow(id, analysis);
+            }
         } catch (err) {
             container.innerHTML = `<div class="p-2 text-danger">Error: ${err.message}</div>`;
         }
@@ -481,7 +556,7 @@
             const url = window.AASubsidyConfig.forceFitUrl.replace("/0/", `/${contractId}/`);
             showLoading();
             try {
-              await fetch(url, {
+              const resp = await fetch(url, {
                 method: "POST",
                 headers: {
                   "X-Requested-With": "XMLHttpRequest",
@@ -490,8 +565,16 @@
                 },
                 body: new URLSearchParams({ fit_id: fitId }).toString()
               });
-            } finally {
+              const data = await resp.json().catch(() => ({}));
+              if (!resp.ok || !data.ok) {
+                const error = (data && data.error) ? data.error : 'force_fit_failed';
+                throw new Error(error);
+              }
               location.reload();
+            } catch (err) {
+              alert(`Force fit failed: ${err.message}`);
+            } finally {
+              hideLoading();
             }
           });
     });

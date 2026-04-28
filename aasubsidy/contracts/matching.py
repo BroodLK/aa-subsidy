@@ -693,6 +693,7 @@ def _select_result(
     contract_id: int,
     candidates: list[CandidateMatch],
     forced_fit_id: int | None = None,
+    forced_fit_name: str | None = None,
     manual_decision: dict[str, Any] | None = None,
 ) -> MatchResultData:
     candidate_by_fit = {candidate.fitting_id: candidate for candidate in candidates}
@@ -734,7 +735,7 @@ def _select_result(
             return MatchResultData(
                 contract_id=contract_id,
                 matched_fitting_id=forced_fit_id,
-                matched_fitting_name=None,
+                matched_fitting_name=forced_fit_name,
                 match_source="forced",
                 match_status="needs_review",
                 score=ZERO,
@@ -1197,15 +1198,22 @@ def match_contracts(
         if preview_fit_id:
             candidate_fit_ids.add(int(preview_fit_id))
 
+        manual_fit_id = int(manual_decision["fitting_id"]) if manual_decision and manual_decision.get("fitting_id") else None
         candidates = [
             evaluate_contract_against_definition(contract_items, fit_definitions[fit_id])
             for fit_id in candidate_fit_ids
-            if fit_id in fit_definitions and fit_definitions[fit_id].profile.enabled
+            if fit_id in fit_definitions
+            and (
+                fit_definitions[fit_id].profile.enabled
+                or fit_id == forced_fit_id
+                or fit_id == manual_fit_id
+            )
         ]
         results[contract_id] = _select_result(
             contract_id=contract_id,
             candidates=candidates,
             forced_fit_id=forced_fit_id,
+            forced_fit_name=fit_definitions[forced_fit_id].fitting_name if forced_fit_id in fit_definitions else None,
             manual_decision=manual_decision,
         )
 
