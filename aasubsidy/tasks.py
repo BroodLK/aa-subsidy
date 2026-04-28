@@ -2,13 +2,16 @@ import requests
 from celery import shared_task
 from django.db import Error, transaction
 from django.core.exceptions import ObjectDoesNotExist
+from django.db.models import Q
 from allianceauth.services.hooks import get_extension_logger
 
-from .models import SubsidyItemPrice
+from .models import SubsidyConfig, SubsidyItemPrice
 from fittings.models import Fitting
 from .models import FittingRequest
 from corptools.models import CorporateContract
 from .models import CorporateContractSubsidy
+from .contracts.filters import apply_contract_exclusions
+from .contracts.matching import match_contracts
 from .helpers.services_update import update_all_prices
 from django.utils import timezone
 
@@ -57,6 +60,7 @@ def _force_refresh_corporate_contracts(corporation_id: int) -> dict:
             "attempted": True,
             "ok": True,
             "contracts_refreshed": len(refreshed_ids),
+            "contract_ids": refreshed_ids,
         }
     except Exception as exc:
         if _is_missing_corporation_audit(exc):
@@ -77,6 +81,71 @@ def _force_refresh_corporate_contracts(corporation_id: int) -> dict:
             exc_info=True,
         )
         return {"attempted": True, "ok": False, "error": str(exc)}
+
+
+def _resolve_corporate_contract_pks(corporation_id: int, identifiers: list[int] | None = None) -> list[int]:
+    raw_ids = sorted({int(identifier) for identifier in (identifiers or []) if identifier})
+    if not raw_ids:
+        return []
+
+    rows = CorporateContract.objects.filter(
+        corporation_id=corporation_id,
+    ).filter(
+        Q(pk__in=raw_ids) | Q(contract_id__in=raw_ids)
+    ).values_list("id", flat=True)
+    return sorted({int(contract_pk) for contract_pk in rows})
+
+
+def _match_imported_contracts(
+    *,
+    corporation_id: int,
+    created_contract_pks: list[int],
+    refreshed_contract_identifiers: list[int] | None = None,
+    chunk_size: int = 250,
+) -> dict:
+    created_pk_set = {int(contract_pk) for contract_pk in created_contract_pks if contract_pk}
+    refreshed_pk_set = set(_resolve_corporate_contract_pks(corporation_id, refreshed_contract_identifiers))
+    target_contract_pks = set(created_pk_set)
+    target_contract_pks.update(refreshed_pk_set)
+
+    unresolved_contracts = CorporateContract.objects.filter(
+        corporation_id=corporation_id,
+        aasubsidy_meta__isnull=False,
+        doctrine_match__isnull=True,
+    ).values_list("id", flat=True)
+    target_contract_pks.update(int(contract_pk) for contract_pk in unresolved_contracts)
+
+    cfg = SubsidyConfig.active()
+    filtered_contract_pks = list(
+        apply_contract_exclusions(
+            CorporateContract.objects.filter(
+                corporation_id=corporation_id,
+                pk__in=target_contract_pks,
+            ),
+            cfg,
+        ).values_list("id", flat=True)
+    )
+
+    if not filtered_contract_pks:
+        return {
+            "matched": 0,
+            "created_contract_matches": 0,
+            "refreshed_contract_matches": 0,
+        }
+
+    matched = 0
+    for index in range(0, len(filtered_contract_pks), max(int(chunk_size or 250), 1)):
+        batch = filtered_contract_pks[index : index + max(int(chunk_size or 250), 1)]
+        match_contracts(batch, persist=True)
+        matched += len(batch)
+
+    created_count = sum(1 for contract_pk in filtered_contract_pks if contract_pk in created_pk_set)
+    refreshed_count = sum(1 for contract_pk in filtered_contract_pks if contract_pk in refreshed_pk_set)
+    return {
+        "matched": matched,
+        "created_contract_matches": created_count,
+        "refreshed_contract_matches": refreshed_count,
+    }
 
 
 @shared_task(bind=True)
@@ -105,9 +174,10 @@ def import_corporate_contract_reviews(
     corporation_id: int | None = None,
     chunk_size: int = 1000,
     force_refresh_contracts: bool = True,
+    match_contracts_on_import: bool = True,
+    match_chunk_size: int = 250,
 ) -> dict:
     """Imports contract subsidies idempotently; refreshes contracts optionally; exempts qualifying records"""
-    from .models import SubsidyConfig
     if corporation_id is None:
         corporation_id = SubsidyConfig.active().corporation_id
 
@@ -118,6 +188,7 @@ def import_corporate_contract_reviews(
     qs = CorporateContract.objects.filter(corporation_id=corporation_id).only("id")
 
     created = 0
+    created_contract_pks: list[int] = []
 
 
     existing_ids = set(
@@ -136,6 +207,7 @@ def import_corporate_contract_reviews(
             if cc_id in existing_ids:
                 continue
             to_create.append(CorporateContractSubsidy(contract_id=cc_id))
+            created_contract_pks.append(cc_id)
             created += 1
 
         if len(to_create) >= chunk_size:
@@ -157,11 +229,26 @@ def import_corporate_contract_reviews(
     if to_exempt.exists():
         CorporateContractSubsidy.objects.filter(id__in=to_exempt.values_list("id", flat=True)).update(exempt=True)
 
+    match_result = {
+        "matched": 0,
+        "created_contract_matches": 0,
+        "refreshed_contract_matches": 0,
+    }
+    if match_contracts_on_import:
+        refreshed_contract_identifiers = refresh_result.get("contract_ids") if isinstance(refresh_result, dict) else []
+        match_result = _match_imported_contracts(
+            corporation_id=corporation_id,
+            created_contract_pks=created_contract_pks,
+            refreshed_contract_identifiers=refreshed_contract_identifiers,
+            chunk_size=match_chunk_size,
+        )
+
     return {
         "created": created,
         "updated": 0,
         "total_contracts": total,
         "contract_refresh": refresh_result,
+        "contract_matching": match_result,
     }
 
 @shared_task(bind=True)

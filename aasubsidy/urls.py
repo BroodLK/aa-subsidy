@@ -9,6 +9,7 @@ urlpatterns = [
     path("", v.MainView.as_view(), name="index"),
     path("insights/", v.DoctrineInsightsView.as_view(), name="insights"),
     path("contract/review/", v.ReviewerView.as_view(), name="review"),
+    path("contract/review/summaries/", v.ReviewSummariesView.as_view(), name="review_summaries"),
     path("contract/<int:contract_id>/approve/", v.ApproveView.as_view(), name="approve"),
     path("contract/<int:contract_id>/deny/", v.DenyView.as_view(), name="deny"),
     path("contract/review/table-pref/save/", v.SaveTablePreferenceView.as_view(), name="save_table_pref"),

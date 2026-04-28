@@ -176,6 +176,100 @@
         `;
         row.cells[warningsIdx].setAttribute('data-val', String(warningCount));
       }
+
+      const reviewStatusIdx = getColumnIndex('review_status');
+      if (reviewStatusIdx >= 0 && analysis.review_status) {
+        const reviewStatusCell = row.cells[reviewStatusIdx];
+        const reviewStatus = String(analysis.review_status);
+        let reviewStatusClass = '';
+        if (reviewStatus === 'Approved') reviewStatusClass = 'text-success';
+        if (reviewStatus === 'Rejected') reviewStatusClass = 'text-danger';
+        reviewStatusCell.innerHTML = `<span class="${reviewStatusClass}">${reviewStatus}</span>`;
+        reviewStatusCell.setAttribute('data-val', reviewStatus);
+      }
+
+      const pricing = analysis.pricing || {};
+      const basisValue = Number(analysis.basis_isk ?? pricing.basis_isk ?? 0);
+      const suggestedValue = Number(analysis.suggested_subsidy ?? pricing.suggested_subsidy ?? 0);
+      const storedSubsidyValue = Number(analysis.stored_subsidy_amount ?? 0);
+      const subsidyValue = Number(analysis.subsidy_amount ?? suggestedValue ?? 0);
+
+      const subsidyIdx = getColumnIndex('subsidy_amount');
+      if (subsidyIdx >= 0) {
+        const subsidyCell = row.cells[subsidyIdx];
+        const subsidyInput = subsidyCell.querySelector("input[data-field='subsidy_amount']");
+        if (subsidyInput) {
+          const currentValue = Number(subsidyInput.value || 0);
+          if (storedSubsidyValue > 0 || currentValue === 0) {
+            subsidyInput.value = subsidyValue.toFixed(2);
+          }
+        }
+        subsidyCell.setAttribute('data-val', subsidyValue.toFixed(2));
+        subsidyCell.setAttribute('data-suggested', suggestedValue.toFixed(2));
+        subsidyCell.setAttribute('data-basis', basisValue.toFixed(2));
+      }
+
+      const reasonIdx = getColumnIndex('reason');
+      if (reasonIdx >= 0 && Object.prototype.hasOwnProperty.call(analysis, 'reason')) {
+        const reasonCell = row.cells[reasonIdx];
+        const reason = String(analysis.reason || '');
+        if (reason) {
+          reasonCell.innerHTML = `<i class="fa fa-comment text-info" title="${escapeHtml(reason)}"></i>`;
+        } else {
+          reasonCell.innerHTML = '&mdash;';
+        }
+        reasonCell.setAttribute('data-val', reason);
+      }
+
+      const paidIdx = getColumnIndex('paid');
+      if (paidIdx >= 0 && Object.prototype.hasOwnProperty.call(analysis, 'paid')) {
+        const paidCell = row.cells[paidIdx];
+        const paid = Boolean(analysis.paid);
+        paidCell.innerHTML = `<span class="${paid ? 'text-success' : ''}">${paid ? 'Yes' : 'No'}</span>`;
+        paidCell.setAttribute('data-val', paid ? 'Yes' : 'No');
+      }
+
+      const pctIdx = getColumnIndex('pct_jita');
+      if (pctIdx >= 0) {
+        const pctCell = row.cells[pctIdx];
+        const priceValue = Number(analysis.price_listed ?? pctCell.getAttribute('data-price') ?? 0);
+        const pctValue = Number(analysis.pct_jita ?? ((priceValue > 0 && basisValue > 0) ? ((priceValue / basisValue) * 100) : 0));
+        pctCell.setAttribute('data-price', String(priceValue));
+        pctCell.setAttribute('data-basis', basisValue.toFixed(2));
+        pctCell.setAttribute('data-val', pctValue.toFixed(2));
+        pctCell.textContent = `${pctValue.toFixed(2)}%`;
+        pctCell.classList.remove('text-danger', 'text-warning', 'text-success');
+        if (pctValue > 101) {
+          pctCell.classList.add('text-danger');
+        } else if (pctValue > 0 && pctValue < 99) {
+          pctCell.classList.add('text-warning');
+        } else if (pctValue > 0) {
+          pctCell.classList.add('text-success');
+        }
+      }
+    }
+
+    async function refreshRowSummariesOnLoad() {
+      const ids = Array.from(document.querySelectorAll('.contract-row[data-id]'))
+        .map(row => row.getAttribute('data-id'))
+        .filter(Boolean);
+      if (!ids.length) return;
+
+      const url = `${window.AASubsidyConfig.reviewSummariesUrl}?contract_ids=${encodeURIComponent(ids.join(','))}`;
+      const resp = await fetch(url, {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data.ok) {
+        throw new Error(data.error || 'Failed to load review summaries');
+      }
+
+      (data.rows || []).forEach(summary => {
+        if (summary && summary.id) {
+          updateContractRow(String(summary.id), summary);
+        }
+      });
+      applyFilters();
     }
 
     async function loadContractItems(id) {
@@ -764,6 +858,12 @@
       });
     }
 
-    hideLoading();
+    refreshRowSummariesOnLoad()
+      .catch((err) => {
+        console.error('Initial review summary refresh failed:', err);
+      })
+      .finally(() => {
+        hideLoading();
+      });
   });
 })();

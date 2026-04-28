@@ -272,6 +272,7 @@
 <script>
     window.AASubsidyConfig = {
         contractItemsUrl: "{% url 'aasubsidy:contract_items' 0 %}",
+        reviewSummariesUrl: "{% url 'aasubsidy:review_summaries' %}",
         matchPreviewUrl: "{% url 'aasubsidy:match_preview' 0 %}",
         saveTablePrefUrl: "{% url 'aasubsidy:save_table_pref' %}",
         forceFitUrl: "{% url 'aasubsidy:force_fit' 0 %}",
@@ -297,5 +298,5 @@
         }
     };
 </script>
-<script src="{% static 'aasubsidy/js/review.js' %}"></script>
+<script src="{% static 'aasubsidy/js/review.js' %}?v=20260428-2"></script>
 {% endblock %}

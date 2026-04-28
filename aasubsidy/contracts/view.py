@@ -22,7 +22,8 @@ from allianceauth.eveonline.models import EveCharacter
 from corptools.models import CorporateContract, CorporateContractItem
 from fittings.models import Fitting
 
-from ..contracts.matching import get_or_match_contract, match_contract
+from ..contracts.matching import get_or_match_contract, get_or_match_contracts, match_contract
+from ..contracts.pricing import get_fitting_pricing_map
 from ..contracts.reviews import reviewer_table
 from ..contracts.summaries import doctrine_stock_summary, doctrine_insights
 from ..models import (
@@ -189,9 +190,64 @@ def _serialize_match_result(result, *, include_items: bool = False) -> dict:
         "warnings": result.warnings or [],
         "hard_failures": result.hard_failures or [],
         "candidates": evidence.get("candidates", []),
+        "pricing": evidence.get("pricing") or {},
     }
     if include_items:
         payload["items"] = evidence.get("item_rows", [])
+    return payload
+
+
+def _serialize_review_row(contract: CorporateContract, result, pricing_fallback: dict[int, dict[str, object]] | None = None) -> dict:
+    meta = getattr(contract, "aasubsidy_meta", None)
+    evidence = (result.evidence or {}) if result else {}
+    pricing = dict(evidence.get("pricing") or {})
+    selected_fit_id = result.matched_fitting_id if result else None
+    pricing_fit_id = selected_fit_id or evidence.get("selected_fit_id")
+    if pricing_fit_id and pricing_fallback and (not pricing.get("basis_isk") and not pricing.get("suggested_subsidy")):
+        fit_info = pricing_fallback.get(int(pricing_fit_id))
+        if fit_info:
+            pricing = {
+                "fit_id": int(pricing_fit_id),
+                "basis_isk": float(fit_info["basis_total"] or 0),
+                "total_volume_m3": float(fit_info["total_vol"] or 0),
+                "suggested_subsidy": float(fit_info["suggested"] or 0),
+            }
+
+    basis_isk = float(pricing.get("basis_isk") or 0)
+    suggested_subsidy = float(pricing.get("suggested_subsidy") or 0)
+    stored_subsidy_amount = float(getattr(meta, "subsidy_amount", 0) or 0)
+    subsidy_amount = stored_subsidy_amount or suggested_subsidy
+    price_listed = float(getattr(contract, "price", 0) or 0)
+    pct_jita = round((price_listed / basis_isk) * 100, 2) if basis_isk > 0 and price_listed > 0 else 0.0
+    review_status = {1: "Approved", -1: "Rejected"}.get(getattr(meta, "review_status", 0), "Pending")
+
+    payload = _serialize_match_result(result) if result else {
+        "selected_fit_id": None,
+        "selected_fit_name": "No Match",
+        "match_source": "auto",
+        "match_status": "rejected",
+        "score": 0.0,
+        "warning_count": 0,
+        "hard_failure_count": 0,
+        "warnings": [],
+        "hard_failures": [],
+        "candidates": [],
+        "pricing": pricing,
+    }
+    payload.update(
+        {
+            "id": int(contract.contract_id),
+            "basis_isk": round(basis_isk, 2),
+            "suggested_subsidy": round(suggested_subsidy, 2),
+            "stored_subsidy_amount": round(stored_subsidy_amount, 2),
+            "subsidy_amount": round(subsidy_amount, 2),
+            "price_listed": int(price_listed),
+            "pct_jita": pct_jita,
+            "review_status": review_status,
+            "reason": getattr(meta, "reason", "") if meta else "",
+            "paid": bool(getattr(meta, "paid", False)),
+        }
+    )
     return payload
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -380,6 +436,44 @@ class ReviewerView(PermissionRequiredMixin, TemplateView):
                     "filters": pref.filters_json,
                 }
         return ctx
+
+
+class ReviewSummariesView(PermissionRequiredMixin, View):
+    permission_required = "aasubsidy.review_subsidy"
+
+    def get(self, request):
+        raw_ids = (request.GET.get("contract_ids") or "").strip()
+        try:
+            public_contract_ids = [int(value) for value in raw_ids.split(",") if value.strip()]
+        except ValueError:
+            return JsonResponse({"ok": False, "error": "invalid_contract_ids"}, status=400)
+
+        if not public_contract_ids:
+            return JsonResponse({"ok": True, "rows": []})
+
+        cfg = SubsidyConfig.active()
+        contracts = list(
+            CorporateContract.objects.filter(
+                contract_id__in=public_contract_ids,
+                corporation_id=cfg.corporation_id,
+            )
+            .select_related("aasubsidy_meta")
+            .order_by("-date_issued")
+        )
+
+        results = get_or_match_contracts([contract.pk for contract in contracts], persist=True)
+        pricing_fit_ids = {
+            int(result.matched_fitting_id or (result.evidence or {}).get("selected_fit_id") or 0)
+            for result in results.values()
+            if result.matched_fitting_id or (result.evidence or {}).get("selected_fit_id")
+        }
+        pricing_fallback = get_fitting_pricing_map(pricing_fit_ids)
+
+        rows = [
+            _serialize_review_row(contract, results.get(contract.pk), pricing_fallback)
+            for contract in contracts
+        ]
+        return JsonResponse({"ok": True, "rows": rows})
 
 
 @method_decorator(csrf_exempt, name="dispatch")
