@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 MAX_SCORE = Decimal("100.00")
 ZERO = Decimal("0.00")
-MATCH_ENGINE_VERSION = 3
+MATCH_ENGINE_VERSION = 4
 
 
 @dataclass(slots=True)
@@ -1278,6 +1278,30 @@ def match_contracts(
             forced_fit_name=fit_definitions[forced_fit_id].fitting_name if forced_fit_id in fit_definitions else None,
             manual_decision=manual_decision,
         )
+
+    selected_fit_ids = {
+        int(result.matched_fitting_id or (result.evidence or {}).get("selected_fit_id") or 0)
+        for result in results.values()
+        if result.matched_fitting_id or (result.evidence or {}).get("selected_fit_id")
+    }
+    if selected_fit_ids:
+        from .pricing import get_fitting_pricing_map
+
+        pricing_map = get_fitting_pricing_map(selected_fit_ids)
+    else:
+        pricing_map = {}
+
+    for result in results.values():
+        evidence = dict(result.evidence or {})
+        selected_fit_id = int(result.matched_fitting_id or evidence.get("selected_fit_id") or 0) or None
+        pricing = pricing_map.get(selected_fit_id or 0)
+        evidence["pricing"] = {
+            "fit_id": selected_fit_id,
+            "basis_isk": float(pricing["basis_total"] or 0) if pricing else 0.0,
+            "total_volume_m3": float(pricing["total_vol"] or 0) if pricing else 0.0,
+            "suggested_subsidy": float(pricing["suggested"] or 0) if pricing else 0.0,
+        }
+        result.evidence = evidence
 
     if persist:
         _persist_results(list(results.values()))

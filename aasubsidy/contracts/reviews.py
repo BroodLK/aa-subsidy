@@ -1,31 +1,16 @@
 from datetime import datetime
-from decimal import Decimal
 from typing import Iterable
 
-from django.db.models import DecimalField, ExpressionWrapper, F, OuterRef, Subquery, Sum, Value
-from django.db.models.functions import Coalesce
+from django.db.models import F
 
 from allianceauth.eveonline.models import EveCharacter
-from eveuniverse.models import EveEntity, EveType
-from fittings.models import Fitting, FittingItem
+from eveuniverse.models import EveEntity
 from corptools.models import CorporateContract
 
 from .filters import apply_contract_exclusions
 from .matching import get_or_match_contracts
-from .summaries import INCR
-from ..helpers.db import Ceil, Round
-from ..models import CorporateContractSubsidy, SubsidyConfig, SubsidyItemPrice
-
-
-def _cfg():
-    cfg = SubsidyConfig.active()
-    return {
-        "basis": cfg.price_basis,
-        "pct": cfg.pct_over_basis,
-        "m3": cfg.cost_per_m3,
-        "incr": cfg.rounding_increment or INCR,
-        "corporation_id": cfg.corporation_id,
-    }
+from .pricing import get_active_pricing_config, get_fitting_pricing_map
+from ..models import CorporateContractSubsidy, SubsidyConfig
 
 
 def _bulk_display_issuer_names(entity_names: Iterable[str]) -> dict[str, str]:
@@ -65,16 +50,9 @@ def _match_source_label(source: str) -> str:
 
 def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = None):
     cfg_model = SubsidyConfig.active()
-    cfg = _cfg()
+    cfg = get_active_pricing_config()
     if corporation_id is None:
         corporation_id = cfg.get("corporation_id")
-
-    dec_0 = DecimalField(max_digits=30, decimal_places=0)
-    dec_2 = DecimalField(max_digits=30, decimal_places=2)
-    dec_4 = DecimalField(max_digits=30, decimal_places=4)
-    price_field = "sell" if cfg["basis"] == "sell" else "buy"
-    incr_val = cfg["incr"] or INCR
-    safe_incr_val = Decimal(str(incr_val)) if Decimal(str(incr_val or 0)) != 0 else Decimal(str(INCR))
 
     base_subsidies = CorporateContractSubsidy.objects.select_related(
         "contract__issuer_name",
@@ -93,108 +71,6 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
         corporation_id=corporation_id if corporation_id is not None else F("corporation_id"),
     )
     base_contracts = apply_contract_exclusions(base_contracts, cfg_model)
-
-    fi_for_fit = FittingItem.objects.filter(fit_id=OuterRef("pk")).values("fit_id")
-    items_basis_fit = (
-        fi_for_fit.annotate(
-            line_val=Coalesce(
-                F("quantity")
-                * Coalesce(
-                    Subquery(
-                        SubsidyItemPrice.objects.filter(eve_type_id=OuterRef("type_id")).values(price_field)[:1],
-                        output_field=dec_2,
-                    ),
-                    Value(Decimal("0"), output_field=dec_2),
-                ),
-                Value(Decimal("0"), output_field=dec_2),
-            )
-        )
-        .values("fit_id")
-        .annotate(total=Sum("line_val", output_field=dec_2))
-        .values("total")
-    )
-    items_volume_fit = (
-        fi_for_fit.annotate(
-            line_vol=Coalesce(
-                F("quantity")
-                * Coalesce(
-                    Subquery(
-                        EveType.objects.filter(id=OuterRef("type_id"))
-                        .annotate(eff_vol=Coalesce(F("packaged_volume"), F("volume")))
-                        .values("eff_vol")[:1],
-                        output_field=dec_4,
-                    ),
-                    Value(Decimal("0"), output_field=dec_4),
-                ),
-                Value(Decimal("0"), output_field=dec_4),
-            )
-        )
-        .values("fit_id")
-        .annotate(total=Sum("line_vol", output_field=dec_4))
-        .values("total")
-    )
-
-    ship_basis_fit = Subquery(
-        SubsidyItemPrice.objects.filter(eve_type_id=OuterRef("ship_type_type_id")).values(price_field)[:1],
-        output_field=dec_2,
-    )
-    ship_vol_fit = Subquery(
-        EveType.objects.filter(id=OuterRef("ship_type_type_id"))
-        .annotate(eff_vol=Coalesce(F("packaged_volume"), F("volume")))
-        .values("eff_vol")[:1],
-        output_field=dec_4,
-    )
-
-    round_items = ExpressionWrapper(
-        Ceil(
-            ExpressionWrapper(
-                Coalesce(Subquery(items_basis_fit, output_field=dec_2), Value(Decimal("0"), output_field=dec_2))
-                / Value(safe_incr_val, output_field=dec_2),
-                output_field=dec_2,
-            ),
-            output_field=dec_0,
-        )
-        * Value(safe_incr_val, output_field=dec_2),
-        output_field=dec_2,
-    )
-    round_ship = ExpressionWrapper(
-        Ceil(
-            ExpressionWrapper(
-                Coalesce(ship_basis_fit, Value(Decimal("0"), output_field=dec_2))
-                / Value(safe_incr_val, output_field=dec_2),
-                output_field=dec_2,
-            ),
-            output_field=dec_0,
-        )
-        * Value(safe_incr_val, output_field=dec_2),
-        output_field=dec_2,
-    )
-    fit_basis_total = ExpressionWrapper(round_items + round_ship, output_field=dec_2)
-    fit_total_vol = ExpressionWrapper(
-        Coalesce(Subquery(items_volume_fit, output_field=dec_4), Value(Decimal("0"), output_field=dec_4))
-        + Coalesce(ship_vol_fit, Value(Decimal("0"), output_field=dec_4)),
-        output_field=dec_4,
-    )
-    fit_suggested = ExpressionWrapper(
-        Ceil(
-            ExpressionWrapper(
-                Round(
-                    ExpressionWrapper(
-                        (F("basis_total") * Value(cfg["pct"], output_field=dec_2))
-                        + (F("total_vol") * Value(cfg["m3"], output_field=dec_2)),
-                        output_field=dec_2,
-                    ),
-                    Value(2),
-                    output_field=dec_2,
-                )
-                / Value(safe_incr_val, output_field=dec_2),
-                output_field=dec_2,
-            ),
-            output_field=dec_0,
-        )
-        * Value(safe_incr_val, output_field=dec_2),
-        output_field=dec_2,
-    )
 
     contracts = list(
         base_contracts.select_related("issuer_name", "start_location_name__system", "aasubsidy_meta")
@@ -220,14 +96,13 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
     issuer_names = [contract["issuer_name__name"] for contract in contracts]
     display_name_map = _bulk_display_issuer_names(issuer_names)
 
-    all_fittings_info = {
-        row["pk"]: row
-        for row in Fitting.objects.annotate(basis_total=fit_basis_total, total_vol=fit_total_vol)
-        .annotate(suggested=fit_suggested)
-        .values("pk", "name", "basis_total", "total_vol", "suggested")
-    }
-
     match_map = get_or_match_contracts([contract["pk"] for contract in contracts], persist=True)
+    pricing_fit_ids = {
+        int(result.matched_fitting_id or (result.evidence or {}).get("selected_fit_id") or 0)
+        for result in match_map.values()
+        if result.matched_fitting_id or (result.evidence or {}).get("selected_fit_id")
+    }
+    all_fittings_info = get_fitting_pricing_map(pricing_fit_ids)
 
     rows = []
     for contract in contracts:
@@ -240,10 +115,11 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
         candidate_names = [candidate["fit_name"] for candidate in candidate_summaries[:3]]
         selected_fit_id = result.matched_fitting_id if result else None
         pricing_fit_id = selected_fit_id or evidence.get("selected_fit_id")
-        basis_val = 0.0
-        suggested = 0.0
-        if pricing_fit_id and pricing_fit_id in all_fittings_info:
-            info = all_fittings_info[pricing_fit_id]
+        pricing = evidence.get("pricing") or {}
+        basis_val = float(pricing.get("basis_isk") or 0.0)
+        suggested = float(pricing.get("suggested_subsidy") or 0.0)
+        if pricing_fit_id and (basis_val <= 0 or suggested <= 0) and pricing_fit_id in all_fittings_info:
+            info = all_fittings_info[int(pricing_fit_id)]
             basis_val = float(info["basis_total"] or 0.0)
             suggested = float(info["suggested"] or 0.0)
 
