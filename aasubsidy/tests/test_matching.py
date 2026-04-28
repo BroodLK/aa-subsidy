@@ -194,6 +194,30 @@ class TestDoctrineMatching(unittest.TestCase):
         self.assertEqual(forced.match_source, "forced")
         self.assertEqual(forced.match_status, "needs_review")
 
+    def test_rejected_result_keeps_top_candidate_item_rows(self):
+        fit = _fit_definition(
+            rules=[
+                ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
+                ItemRuleData(200, "Required Module", expected_quantity=1),
+            ],
+            type_info={
+                100: TypeInfo(100, "Hull"),
+                200: TypeInfo(200, "Required Module"),
+            },
+        )
+        contract = {
+            100: ContractItemData(100, "Hull", included_qty=1),
+        }
+
+        candidate = evaluate_contract_against_definition(contract, fit)
+        result = _select_result(contract_id=42, candidates=[candidate], manual_decision=None)
+
+        self.assertEqual(result.match_status, "rejected")
+        self.assertEqual(result.evidence["selected_fit_name"], "Test Fit")
+        self.assertTrue(result.evidence.get("item_rows"))
+        self.assertTrue(any(row["status"] == "error" for row in result.evidence["item_rows"]))
+        self.assertTrue(any(issue["code"] == "missing_required" for issue in result.hard_failures))
+
 
 if __name__ == "__main__":
     unittest.main()

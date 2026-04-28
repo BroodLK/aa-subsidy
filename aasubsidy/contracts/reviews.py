@@ -256,7 +256,9 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
             if result and result.matched_fitting_name
             else evidence.get("selected_fit_name")
         ) or "No Match"
-        alt_candidates = [name for name in candidate_names if name != selected_name]
+        alt_candidates = []
+        if not result or float(result.score or 0) < 100.0:
+            alt_candidates = [name for name in candidate_names if name != selected_name]
         doctrine_html = (
             f'<div class="fw-semibold">{selected_name}</div>'
             f'<div class="small text-muted">'

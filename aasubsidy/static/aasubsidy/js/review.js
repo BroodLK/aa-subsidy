@@ -101,6 +101,28 @@
       return value ? value.charAt(0).toUpperCase() + value.slice(1) : 'Rejected';
     }
 
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function renderIssueSummary(issues, title, cssClass) {
+      if (!Array.isArray(issues) || !issues.length) return '';
+      const items = issues
+        .map(issue => `<li>${escapeHtml(issue && issue.message ? issue.message : String(issue || ''))}</li>`)
+        .join('');
+      return `
+        <div class="mt-2">
+          <div class="fw-semibold ${cssClass}">${escapeHtml(title)}</div>
+          <ul class="mb-0 ps-3 ${cssClass}">${items}</ul>
+        </div>
+      `;
+    }
+
     function updateContractRow(id, analysis) {
       const row = document.querySelector(`.contract-row[data-id="${id}"]`);
       if (!row || !analysis) return;
@@ -111,7 +133,9 @@
       const candidateNames = Array.isArray(analysis.candidates)
         ? analysis.candidates.slice(0, 3).map(candidate => candidate.fit_name).filter(Boolean)
         : [];
-      const altCandidates = candidateNames.filter(name => name !== selectedName);
+      const altCandidates = Number(analysis.score || 0) >= 100
+        ? []
+        : candidateNames.filter(name => name !== selectedName);
 
       const doctrineIdx = getColumnIndex('doctrine');
       if (doctrineIdx >= 0) {
@@ -171,17 +195,21 @@
                 const statusClass = analysis.match_status === 'matched'
                     ? 'text-success'
                     : (analysis.match_status === 'needs_review' ? 'text-warning' : 'text-danger');
+                const sourceLabel = formatMatchSource(analysis.match_source);
+                const statusLabel = formatMatchStatus(analysis.match_status);
                 const candidateText = (analysis.candidates || [])
                     .slice(0, 3)
                     .map(candidate => `${candidate.fit_name} (${candidate.score.toFixed ? candidate.score.toFixed(2) : candidate.score})`)
                     .join(', ');
+                const failureSummary = renderIssueSummary(analysis.hard_failures, 'Rejected Because', 'text-danger');
+                const warningSummary = renderIssueSummary(analysis.warnings, 'Warnings', 'text-warning');
                 summaryHtml = `
                     <div class="px-3 py-2 small border-bottom border-secondary">
                         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
                             <div>
                                 <span class="fw-semibold">${analysis.selected_fit_name || 'No doctrine selected'}</span>
-                                <span class="ms-2 badge text-bg-secondary">${analysis.match_source || 'auto'}</span>
-                                <span class="ms-2 ${statusClass}">${String(analysis.match_status || '').replace('_', ' ')}</span>
+                                <span class="ms-2 badge text-bg-secondary">${sourceLabel}</span>
+                                <span class="ms-2 ${statusClass}">${statusLabel}</span>
                                 <span class="ms-2">Score ${Number(analysis.score || 0).toFixed(2)}</span>
                             </div>
                             <div class="d-flex gap-2">
@@ -189,6 +217,8 @@
                             </div>
                         </div>
                         ${candidateText ? `<div class="mt-2 text-muted">Candidates: ${candidateText}</div>` : ''}
+                        ${failureSummary}
+                        ${warningSummary}
                     </div>
                 `;
             }

@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 MAX_SCORE = Decimal("100.00")
 ZERO = Decimal("0.00")
-MATCH_ENGINE_VERSION = 2
+MATCH_ENGINE_VERSION = 3
 
 
 @dataclass(slots=True)
@@ -765,11 +765,10 @@ def _select_result(
 
     if not viable:
         top_candidate = max(candidates, key=lambda candidate: (candidate.score, candidate.fitting_name.lower()), default=None)
-        evidence = {
-            "selected_fit_id": getattr(top_candidate, "fitting_id", None),
-            "selected_fit_name": getattr(top_candidate, "fitting_name", None),
-            "candidates": _candidate_summaries(candidates),
-        }
+        evidence = dict(getattr(top_candidate, "evidence", {}) or {})
+        evidence["selected_fit_id"] = getattr(top_candidate, "fitting_id", None)
+        evidence["selected_fit_name"] = getattr(top_candidate, "fitting_name", None)
+        evidence["candidates"] = _candidate_summaries(candidates)
         return MatchResultData(
             contract_id=contract_id,
             matched_fitting_id=None,
