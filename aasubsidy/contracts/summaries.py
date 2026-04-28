@@ -26,10 +26,10 @@ from ..models import (
     FittingRequest,
     SubsidyConfig,
     SubsidyItemPrice,
-    CorporateContractSubsidy,
     DoctrineSystem,
 )
-from corptools.models import CorporateContract, CorporateContractItem
+from corptools.models import CorporateContract
+from .matching import match_contracts
 from allianceauth.eveonline.models import EveCharacter
 
 INCR = 250_000
@@ -132,60 +132,13 @@ def doctrine_stock_summary(
 
         contract_locations[cid] = locs
 
-    forced_map = dict(
-        CorporateContractSubsidy.objects.filter(
-            contract__in=contract_qs, forced_fitting__isnull=False
-        ).values_list("contract_id", "forced_fitting_id")
-    )
-    forced_contract_ids = set(forced_map.keys())
-
-    # Matching logic refactored to be more efficient (avoiding N+1 queries)
-    # Use the same matching logic as reviews.py for consistency
     contract_pks = list(contract_qs.values_list("pk", flat=True))
-    all_contract_items = CorporateContractItem.objects.filter(
-        contract_id__in=contract_pks, is_included=True
-    ).values("contract_id", "type_name_id", "quantity")
-
-    contract_items_map = {}
-    for item in all_contract_items:
-        cid = item["contract_id"]
-        if cid not in contract_items_map:
-            contract_items_map[cid] = {}
-        contract_items_map[cid][item["type_name_id"]] = contract_items_map[cid].get(item["type_name_id"], 0) + item["quantity"]
-
-    all_fittings = list(Fitting.objects.all().values("pk", "name", "ship_type_type_id"))
-    all_fitting_items = FittingItem.objects.all().values("fit_id", "type_id", "quantity")
-    fit_items_map = {}
-    for item in all_fitting_items:
-        fid = item["fit_id"]
-        if fid not in fit_items_map:
-            fit_items_map[fid] = {}
-        fit_items_map[fid][item["type_id"]] = item["quantity"]
-
-    def get_first_match(contract_pk):
-        c_items = contract_items_map.get(contract_pk, {})
-        for f in all_fittings:
-            f_items = fit_items_map.get(f["pk"], {})
-            # Check hull
-            if c_items.get(f["ship_type_type_id"], 0) < 1:
-                continue
-            # Check items
-            possible = True
-            for t_id, qty in f_items.items():
-                if c_items.get(t_id, 0) < qty:
-                    possible = False
-                    break
-            if possible:
-                return f["pk"]
-        return None
-
-    auto_match_map: Dict[int, int] = {}
-    for contract_pk in contract_pks:
-        if contract_pk in forced_contract_ids:
-            continue
-        matched_fit = get_first_match(contract_pk)
-        if matched_fit:
-            auto_match_map[contract_pk] = matched_fit
+    match_map = match_contracts(contract_pks, persist=False)
+    matched_fit_map: Dict[int, int] = {
+        contract_pk: int(result.matched_fitting_id)
+        for contract_pk, result in match_map.items()
+        if result.match_status == "matched" and result.matched_fitting_id
+    }
 
     DEC_0 = DecimalField(max_digits=30, decimal_places=0)
     DEC_2 = DecimalField(max_digits=30, decimal_places=2)
@@ -382,7 +335,7 @@ def doctrine_stock_summary(
         allowed_locations = system_locations.get(system.id)
         system_stock_counts: Dict[int, int] = defaultdict(int)
 
-        for cid, fit_id in forced_map.items():
+        for cid, fit_id in matched_fit_map.items():
             if allowed_locations is not None:
                 c_locs = contract_locations.get(cid, set())
                 if not (c_locs & allowed_locations):
@@ -390,16 +343,6 @@ def doctrine_stock_summary(
             else:
                 continue
             system_stock_counts[int(fit_id)] += 1
-
-        for cid, fit_id in auto_match_map.items():
-            if allowed_locations is not None:
-                c_locs = contract_locations.get(cid, set())
-                if not (c_locs & allowed_locations):
-                    continue
-            else:
-                continue
-
-            system_stock_counts[fit_id] += 1
 
         # Calculate doctrine-level totals for this system
         # requested_per_fit[fit_id] = FittingRequest.requested in this system
@@ -561,65 +504,20 @@ def doctrine_insights(corporation_id: int | None = None):
     )
     all_contracts += list(sold_contracts_qs)
 
-    # Bulk matching for insights
     contract_pks = [c.id for c in all_contracts]
-    all_contract_items = CorporateContractItem.objects.filter(
-        contract_id__in=contract_pks, is_included=True
-    ).values("contract_id", "type_name_id", "quantity")
-    
-    contract_items_map = {}
-    for item in all_contract_items:
-        cid = item["contract_id"]
-        if cid not in contract_items_map:
-            contract_items_map[cid] = {}
-        contract_items_map[cid][item["type_name_id"]] = contract_items_map[cid].get(item["type_name_id"], 0) + item["quantity"]
-        
-    all_fittings_info = list(Fitting.objects.all().values("pk", "name", "ship_type_type_id"))
-    all_fitting_items = FittingItem.objects.all().values("fit_id", "type_id", "quantity")
-    fit_items_map = {}
-    for item in all_fitting_items:
-        fid = item["fit_id"]
-        if fid not in fit_items_map:
-            fit_items_map[fid] = {}
-        fit_items_map[fid][item["type_id"]] = item["quantity"]
-        
-    def get_matches(contract_pk):
-        c_items = contract_items_map.get(contract_pk, {})
-        matches = []
-        for f in all_fittings_info:
-            f_items = fit_items_map.get(f["pk"], {})
-            if c_items.get(f["ship_type_type_id"], 0) < 1:
-                continue
-            possible = True
-            for t_id, qty in f_items.items():
-                if c_items.get(t_id, 0) < qty:
-                    possible = False
-                    break
-            if possible:
-                matches.append(f)
-        return matches
-
+    match_map = match_contracts(contract_pks, persist=False)
     contract_titles = {}
     contract_fit_pk = {}
     valid_contract_ids = set()
-    fitting_name_map = {f["pk"]: f["name"] for f in all_fittings_info}
+    fitting_name_map = {f["pk"]: f["name"] for f in Fitting.objects.values("pk", "name")}
 
     for c in all_contracts:
-        meta = getattr(c, "aasubsidy_meta", None)
-        forced_id = getattr(meta, "forced_fitting_id", None)
-        if forced_id:
-            fit_name = fitting_name_map.get(forced_id)
-            contract_titles[c.id] = f"{fit_name} (forced)" if fit_name else "Forced Doctrine"
-            contract_fit_pk[c.id] = forced_id
-            valid_contract_ids.add(c.id)
-        else:
-            matches = get_matches(c.id)
-            if matches:
-                contract_titles[c.id] = ", ".join([m["name"] for m in matches])
-                contract_fit_pk[c.id] = matches[0]["pk"]
-                valid_contract_ids.add(c.id)
-            else:
-                continue
+        result = match_map.get(c.id)
+        if not result or result.match_status != "matched" or not result.matched_fitting_id:
+            continue
+        contract_titles[c.id] = result.matched_fitting_name or fitting_name_map.get(result.matched_fitting_id, "Unknown")
+        contract_fit_pk[c.id] = int(result.matched_fitting_id)
+        valid_contract_ids.add(c.id)
 
     def get_display_issuer(c):
         char_id = getattr(c.issuer_name, "eve_id", None)

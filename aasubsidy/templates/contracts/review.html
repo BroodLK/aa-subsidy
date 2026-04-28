@@ -11,7 +11,7 @@
   <div id="loadingOverlay" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; z-index:2000;">
     <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);" class="text-center">
       <div class="spinner-border text-light" role="status" aria-hidden="true"></div>
-      <div class="mt-2 text-light small">{% trans "Loading…" %}</div>
+      <div class="mt-2 text-light small">{% trans "Loading..." %}</div>
     </div>
   </div>
 
@@ -36,6 +36,9 @@
               <th data-col="title">{% trans "Title" %}</th>
               <th data-col="station">{% trans "Station" %}</th>
               <th data-col="doctrine">{% trans "Doctrine" %}</th>
+              <th data-col="match_source">{% trans "Match" %}</th>
+              <th data-col="match_score">{% trans "Score" %}</th>
+              <th data-col="warning_count">{% trans "Warnings" %}</th>
               <th data-col="review_status">{% trans "Review_Status" %}</th>
               <th data-col="subsidy_amount">{% trans "Subsidy_Amount" %}</th>
               <th data-col="reason">{% trans "Reason" %}</th>
@@ -47,10 +50,10 @@
               </th>
             </tr>
             <tr class="text-center small">
-              <th><input class="form-control form-control-sm" data-filter="id" placeholder="…"></th>
-              <th><input class="form-control form-control-sm" data-filter="issuer" placeholder="…"></th>
-              <th><input class="form-control form-control-sm" data-filter="date_issued" placeholder="…"></th>
-              <th><input class="form-control form-control-sm" data-filter="price_listed" placeholder="…"></th>
+              <th><input class="form-control form-control-sm" data-filter="id" placeholder="..."></th>
+              <th><input class="form-control form-control-sm" data-filter="issuer" placeholder="..."></th>
+              <th><input class="form-control form-control-sm" data-filter="date_issued" placeholder="..."></th>
+              <th><input class="form-control form-control-sm" data-filter="price_listed" placeholder="..."></th>
               <th>
                 <select class="form-select form-select-sm" data-filter="status">
                   <option value="">{% trans "All" %}</option>
@@ -60,9 +63,20 @@
                   <option>failed</option>
                 </select>
               </th>
-              <th><input class="form-control form-control-sm" data-filter="title" placeholder="…"></th>
-              <th><input class="form-control form-control-sm" data-filter="station" placeholder="…"></th>
-              <th><input class="form-control form-control-sm" data-filter="doctrine" placeholder="…"></th>
+              <th><input class="form-control form-control-sm" data-filter="title" placeholder="..."></th>
+              <th><input class="form-control form-control-sm" data-filter="station" placeholder="..."></th>
+              <th><input class="form-control form-control-sm" data-filter="doctrine" placeholder="..."></th>
+              <th>
+                <select class="form-select form-select-sm" data-filter="match_source">
+                  <option value="">{% trans "All" %}</option>
+                  <option>Exact</option>
+                  <option>Rule</option>
+                  <option>Forced</option>
+                  <option>One-off</option>
+                </select>
+              </th>
+              <th><input class="form-control form-control-sm" data-filter="match_score" placeholder="..."></th>
+              <th><input class="form-control form-control-sm" data-filter="warning_count" placeholder="..."></th>
               <th>
                 <select class="form-select form-select-sm" data-filter="review_status">
                   <option value="">{% trans "All" %}</option>
@@ -71,8 +85,8 @@
                   <option>Pending</option>
                 </select>
               </th>
-              <th><input class="form-control form-control-sm" data-filter="subsidy_amount" placeholder="…"></th>
-              <th><input class="form-control form-control-sm" data-filter="reason" placeholder="…"></th>
+              <th><input class="form-control form-control-sm" data-filter="subsidy_amount" placeholder="..."></th>
+              <th><input class="form-control form-control-sm" data-filter="reason" placeholder="..."></th>
               <th>
                 <select class="form-select form-select-sm" data-filter="paid">
                   <option value="">{% trans "All" %}</option>
@@ -80,7 +94,7 @@
                   <option>No</option>
                 </select>
               </th>
-              <th><input class="form-control form-control-sm" data-filter="pct_jita" placeholder="…"></th>
+              <th><input class="form-control form-control-sm" data-filter="pct_jita" placeholder="..."></th>
               <th></th>
               <th class="text-center">
                 <input type="checkbox" id="bulkCheckAll" class="form-check-input">
@@ -103,27 +117,35 @@
               <td data-val="{{ row.station|default_if_none:''|escape }}">
                 {% if row.station %}
                   <i class="fa fa-location-dot text-info" data-bs-toggle="tooltip" title="{{ row.station|escape }}"></i>
-                {% else %}—{% endif %}
+                {% else %}&mdash;{% endif %}
               </td>
               <td data-val="{{ row.doctrine|striptags }}">
-                  <div class="d-flex flex-column gap-1">
-                    <div class="doctrine-display">{{ row.doctrine|safe|default:"—" }}</div>
-                    <div class="d-flex flex-column align-items-stretch gap-1 force-fit-container d-none">
-                      <input
-                        type="search"
-                        class="form-control form-control-sm force-fit-search"
-                        placeholder="{% trans 'Search doctrine...' %}"
-                        autocomplete="off"
-                      >
-                      <select class="form-select form-select-sm force-fit-select" data-contract="{{ row.id }}">
-                        <option value="">{% trans "Choose a doctrine" %}</option>
-                        <option value="__clear__">{% trans "Clear choice" %}</option>
-                        {% for f in all_fits %}
-                          <option value="{{ f.id }}">{{ f.name }}</option>
-                        {% endfor %}
-                      </select>
-                    </div>
+                <div class="d-flex flex-column gap-1">
+                  <div class="doctrine-display">{{ row.doctrine|safe|default:"&mdash;" }}</div>
+                  <div class="d-flex flex-column align-items-stretch gap-1 force-fit-container d-none">
+                    <input
+                      type="search"
+                      class="form-control form-control-sm force-fit-search"
+                      placeholder="{% trans 'Search doctrine...' %}"
+                      autocomplete="off"
+                    >
+                    <select class="form-select form-select-sm force-fit-select" data-contract="{{ row.id }}">
+                      <option value="">{% trans "Choose a doctrine" %}</option>
+                      <option value="__clear__">{% trans "Clear choice" %}</option>
+                      {% for f in all_fits %}
+                        <option value="{{ f.id }}">{{ f.name }}</option>
+                      {% endfor %}
+                    </select>
                   </div>
+                </div>
+              </td>
+              <td data-val="{{ row.match_source }}">{{ row.match_source }}</td>
+              <td data-val="{{ row.match_score }}">{{ row.match_score|floatformat:2 }}</td>
+              <td data-val="{{ row.warning_count }}">
+                <span class="{% if row.warning_count > 0 %}text-warning{% endif %}">{{ row.warning_count }}</span>
+                {% if row.hard_failure_count > 0 %}
+                  <span class="text-danger">/{{ row.hard_failure_count }}</span>
+                {% endif %}
               </td>
               <td data-val="{{ row.review_status }}">
                 <span class="{% if row.review_status == 'Approved' %}text-success{% elif row.review_status == 'Rejected' %}text-danger{% endif %}">{{ row.review_status }}</span>
@@ -141,7 +163,7 @@
               <td data-val="{{ row.reason|default_if_none:''|escape }}">
                 {% if row.reason %}
                   <i class="fa fa-comment text-info" data-bs-toggle="tooltip" title="{{ row.reason|escape }}"></i>
-                {% else %}—{% endif %}
+                {% else %}&mdash;{% endif %}
               </td>
               <td data-val="{{ row.paid|yesno:'Yes,No' }}">
                 <span class="{% if row.paid %}text-success{% endif %}">{{ row.paid|yesno:"Yes,No" }}</span>
@@ -167,7 +189,7 @@
               </td>
             </tr>
             <tr id="details-{{ row.id }}" class="detail-row">
-              <td colspan="15" class="bg-dark p-3">
+              <td colspan="18" class="bg-dark p-3">
                 <div class="card bg-secondary text-light">
                   <div class="card-header border-light py-1">
                     <h6 class="m-0 small">{% trans "Contract Items" %}</h6>
@@ -183,7 +205,7 @@
               </td>
             </tr>
             {% empty %}
-            <tr><td colspan="15" class="text-center text-muted">{% trans "No contracts to display." %}</td></tr>
+            <tr><td colspan="18" class="text-center text-muted">{% trans "No contracts to display." %}</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -250,8 +272,11 @@
 <script>
     window.AASubsidyConfig = {
         contractItemsUrl: "{% url 'aasubsidy:contract_items' 0 %}",
+        matchPreviewUrl: "{% url 'aasubsidy:match_preview' 0 %}",
         saveTablePrefUrl: "{% url 'aasubsidy:save_table_pref' %}",
         forceFitUrl: "{% url 'aasubsidy:force_fit' 0 %}",
+        acceptOnceUrl: "{% url 'aasubsidy:accept_once' 0 %}",
+        createRuleUrl: "{% url 'aasubsidy:create_rule' 0 %}",
         approveUrl: "{% url 'aasubsidy:approve' 0 %}",
         denyUrl: "{% url 'aasubsidy:deny' 0 %}",
         tablePref: {{ table_pref|default:"null"|safe }},
@@ -262,7 +287,13 @@
             selectAtLeastOne: "{% trans 'Select at least one row.' %}",
             enterComment: "{% trans 'Enter comment (optional):' %}",
             enterReason: "{% trans 'Enter reason for denial (required):' %}",
-            reasonRequired: "{% trans 'Reason is required.' %}"
+            reasonRequired: "{% trans 'Reason is required.' %}",
+            acceptOnce: "{% trans 'Accept This Contract Once' %}",
+            createRule: "{% trans 'Make Acceptable' %}",
+            allowMissing: "{% trans 'Allow Missing' %}",
+            allowQuantity: "{% trans 'Allow Quantity' %}",
+            allowSubstitute: "{% trans 'Allow Substitute' %}",
+            ignoreExtra: "{% trans 'Ignore Extra' %}"
         }
     };
 </script>

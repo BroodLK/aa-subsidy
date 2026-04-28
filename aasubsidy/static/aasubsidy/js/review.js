@@ -93,17 +93,30 @@
             if (!resp.ok || !data.ok) throw new Error(data.error || 'Failed to load items');
 
             const analysis = data.analysis || null;
-            const showValidation = Boolean(analysis && analysis.forced_fit_name);
+            const showValidation = Boolean(analysis && analysis.selected_fit_name);
             let summaryHtml = '';
             if (showValidation) {
-                const summaryClass = analysis.has_issues ? 'text-warning' : 'text-success';
-                const summaryText = analysis.has_issues
-                    ? `${analysis.issue_count} issue(s) found.`
-                    : 'No doctrine mismatches found.';
+                const statusClass = analysis.match_status === 'matched'
+                    ? 'text-success'
+                    : (analysis.match_status === 'needs_review' ? 'text-warning' : 'text-danger');
+                const candidateText = (analysis.candidates || [])
+                    .slice(0, 3)
+                    .map(candidate => `${candidate.fit_name} (${candidate.score.toFixed ? candidate.score.toFixed(2) : candidate.score})`)
+                    .join(', ');
                 summaryHtml = `
-                    <div class="px-3 py-2 small border-bottom border-secondary ${summaryClass}">
-                        Forced doctrine: <span class="fw-semibold">${analysis.forced_fit_name}</span>
-                        <span class="ms-2">${summaryText}</span>
+                    <div class="px-3 py-2 small border-bottom border-secondary">
+                        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                            <div>
+                                <span class="fw-semibold">${analysis.selected_fit_name || 'No doctrine selected'}</span>
+                                <span class="ms-2 badge text-bg-secondary">${analysis.match_source || 'auto'}</span>
+                                <span class="ms-2 ${statusClass}">${String(analysis.match_status || '').replace('_', ' ')}</span>
+                                <span class="ms-2">Score ${Number(analysis.score || 0).toFixed(2)}</span>
+                            </div>
+                            <div class="d-flex gap-2">
+                                ${analysis.can_accept_once ? `<button type="button" class="btn btn-sm btn-outline-success accept-once-btn" data-contract="${id}" data-fit="${analysis.selected_fit_id || ''}">${window.AASubsidyConfig.lang.acceptOnce}</button>` : ''}
+                            </div>
+                        </div>
+                        ${candidateText ? `<div class="mt-2 text-muted">Candidates: ${candidateText}</div>` : ''}
                     </div>
                 `;
             }
@@ -121,10 +134,33 @@
                 return '<span class="badge bg-success">OK</span>';
             };
 
+            const renderActions = (item) => {
+                const actions = Array.isArray(item.actions) ? item.actions : [];
+                if (!actions.length || !analysis || !analysis.selected_fit_id) return '&mdash;';
+                const labels = {
+                    optional_item: window.AASubsidyConfig.lang.allowMissing,
+                    quantity_tolerance: window.AASubsidyConfig.lang.allowQuantity,
+                    specific_substitute: window.AASubsidyConfig.lang.allowSubstitute,
+                    ignore_extra_item: window.AASubsidyConfig.lang.ignoreExtra,
+                };
+                return actions.map(action => {
+                    const params = new URLSearchParams({
+                        fit_id: String(analysis.selected_fit_id || ''),
+                        action_name: action,
+                        expected_type_id: item.expected_type_id || '',
+                        actual_type_id: item.actual_type_id || item.type_id || '',
+                        expected_qty: item.expected_qty || '',
+                        actual_qty: item.qty || '',
+                        category: item.category || '',
+                    });
+                    return `<button type="button" class="btn btn-sm btn-outline-light create-rule-btn" data-contract="${id}" data-payload="${encodeURIComponent(params.toString())}">${labels[action] || action}</button>`;
+                }).join(' ');
+            };
+
             let html = '<table class="table table-sm table-dark mb-0 font-monospace" style="font-size: 0.8rem;">';
             html = summaryHtml + html;
             html += showValidation
-                ? '<thead><tr><th>Type</th><th class="text-end">Qty</th><th class="text-center">Included</th><th class="text-center">Check</th><th>Why</th></tr></thead><tbody>'
+                ? '<thead><tr><th>Type</th><th class="text-end">Qty</th><th class="text-center">Included</th><th class="text-center">Check</th><th>Why</th><th>Action</th></tr></thead><tbody>'
                 : '<thead><tr><th>Type</th><th class="text-end">Qty</th><th class="text-center">Included</th></tr></thead><tbody>';
             data.items.forEach(item => {
                 html += showValidation
@@ -134,6 +170,7 @@
                         <td class="text-center">${renderIncluded(item)}</td>
                         <td class="text-center">${renderStatus(item)}</td>
                         <td class="text-wrap">${item.reason || '&mdash;'}</td>
+                        <td class="text-wrap">${renderActions(item)}</td>
                     </tr>`
                     : `<tr>
                         <td>${item.name}</td>
@@ -383,6 +420,55 @@
             await navigator.clipboard?.writeText(String(input.value || ''));
             showToast();
           } catch (_) {}
+        }
+      }
+    });
+    document.addEventListener('click', async (e) => {
+      const acceptBtn = e.target.closest('.accept-once-btn');
+      if (acceptBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const contractId = acceptBtn.getAttribute('data-contract');
+        const fitId = acceptBtn.getAttribute('data-fit');
+        if (!contractId || !fitId) return;
+        const token = (document.querySelector('[name=csrfmiddlewaretoken]') || {}).value || '';
+        showLoading();
+        try {
+          await fetch(window.AASubsidyConfig.acceptOnceUrl.replace("/0/", `/${contractId}/`), {
+            method: 'POST',
+            headers: {
+              'X-Requested-With': 'XMLHttpRequest',
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+              'X-CSRFToken': token
+            },
+            body: new URLSearchParams({ fit_id: fitId }).toString()
+          });
+        } finally {
+          location.reload();
+        }
+      }
+
+      const ruleBtn = e.target.closest('.create-rule-btn');
+      if (ruleBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const contractId = ruleBtn.getAttribute('data-contract');
+        const payload = decodeURIComponent(ruleBtn.getAttribute('data-payload') || '');
+        if (!contractId || !payload) return;
+        const token = (document.querySelector('[name=csrfmiddlewaretoken]') || {}).value || '';
+        showLoading();
+        try {
+          await fetch(window.AASubsidyConfig.createRuleUrl.replace("/0/", `/${contractId}/`), {
+            method: 'POST',
+            headers: {
+              'X-Requested-With': 'XMLHttpRequest',
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+              'X-CSRFToken': token
+            },
+            body: payload
+          });
+        } finally {
+          location.reload();
         }
       }
     });

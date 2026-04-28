@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Any, List
+from typing import List
 
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, PermissionRequiredMixin
@@ -21,11 +20,22 @@ from django.db.models import Sum
 from allianceauth.authentication.models import CharacterOwnership
 from allianceauth.eveonline.models import EveCharacter
 from corptools.models import CorporateContract, CorporateContractItem
-from fittings.models import Fitting, FittingItem
+from fittings.models import Fitting
 
+from ..contracts.matching import match_contract
 from ..contracts.reviews import reviewer_table
 from ..contracts.summaries import doctrine_stock_summary, doctrine_insights
-from ..models import CorporateContractSubsidy, FittingClaim, UserTablePreference, SubsidyConfig
+from ..models import (
+    CorporateContractSubsidy,
+    DoctrineContractDecision,
+    DoctrineItemRule,
+    DoctrineMatchProfile,
+    DoctrineQuantityTolerance,
+    DoctrineSubstitutionRule,
+    FittingClaim,
+    SubsidyConfig,
+    UserTablePreference,
+)
 from .payments import aggregate_payments_to_main, mark_all_unpaid_for_main_as_paid
 
 
@@ -164,6 +174,25 @@ def get_main_for_character(character: EveCharacter):
         CharacterOwnership.user.RelatedObjectDoesNotExist,
     ):
         return None
+
+
+def _serialize_match_result(result, *, include_items: bool = False) -> dict:
+    evidence = result.evidence or {}
+    payload = {
+        "selected_fit_id": result.matched_fitting_id or evidence.get("selected_fit_id"),
+        "selected_fit_name": result.matched_fitting_name or evidence.get("selected_fit_name"),
+        "match_source": result.match_source,
+        "match_status": result.match_status,
+        "score": float(result.score or 0),
+        "warning_count": len(result.warnings or []),
+        "hard_failure_count": len(result.hard_failures or []),
+        "warnings": result.warnings or [],
+        "hard_failures": result.hard_failures or [],
+        "candidates": evidence.get("candidates", []),
+    }
+    if include_items:
+        payload["items"] = evidence.get("item_rows", [])
+    return payload
 
 @method_decorator(csrf_exempt, name="dispatch")
 class DeleteClaimView(PermissionRequiredMixin, View):
@@ -571,124 +600,196 @@ class ForceFitView(PermissionRequiredMixin, View):
                 return JsonResponse({"ok": False, "error": "invalid_fit"}, status=400)
 
         meta.save(update_fields=["forced_fitting"])
-        return JsonResponse({"ok": True})
+        result = match_contract(cc.pk, persist=True)
+        return JsonResponse({"ok": True, "match": _serialize_match_result(result)})
 
 
-def _expected_items_for_fit(fit: Fitting) -> dict[int, dict[str, Any]]:
-    expected: dict[int, dict[str, Any]] = {
-        int(fit.ship_type_type_id): {
-            "name": fit.ship_type.name,
-            "expected_qty": 1,
-        }
-    }
+@method_decorator(csrf_exempt, name="dispatch")
+class MatchPreviewView(PermissionRequiredMixin, View):
+    permission_required = "aasubsidy.review_subsidy"
 
-    fitting_items = (
-        FittingItem.objects.filter(fit=fit)
-        .select_related("type_fk")
-        .values("type_id", "type_fk__name")
-        .annotate(total_qty=Sum("quantity"))
-    )
-    for item in fitting_items:
-        type_id = int(item["type_id"])
-        if type_id in expected:
-            expected[type_id]["expected_qty"] += int(item["total_qty"] or 0)
-        else:
-            expected[type_id] = {
-                "name": item["type_fk__name"] or str(type_id),
-                "expected_qty": int(item["total_qty"] or 0),
-            }
-
-    return expected
-
-
-def _analyze_items_for_forced_fit(
-    *,
-    forced_fit: Fitting,
-    item_rows: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    expected = _expected_items_for_fit(forced_fit)
-    actual_included_qty: dict[int, int] = defaultdict(int)
-    actual_any_qty: dict[int, int] = defaultdict(int)
-    analyzed_rows: list[dict[str, Any]] = []
-    issue_count = 0
-
-    for item in item_rows:
-        type_id = int(item["type_id"])
-        qty = int(item["qty"] or 0)
-        is_included = bool(item["is_included"])
-        actual_any_qty[type_id] += qty
-        if is_included:
-            actual_included_qty[type_id] += qty
-
-        status = "ok"
-        reason = ""
-        expected_item = expected.get(type_id)
-        expected_qty = int(expected_item["expected_qty"]) if expected_item else 0
-
-        if is_included:
-            if not expected_item:
-                status = "error"
-                reason = "Unexpected included item for the forced doctrine."
-            elif qty < expected_qty:
-                status = "error"
-                reason = f"Included quantity too low: expected {expected_qty}, found {qty}."
-            elif qty > expected_qty:
-                status = "error"
-                reason = f"Included quantity too high: expected {expected_qty}, found {qty}."
-        elif expected_item:
-            status = "error"
-            reason = (
-                f"Required doctrine item is marked excluded instead of included "
-                f"(expected {expected_qty}, found excluded {qty})."
+    def get(self, request, contract_id: int):
+        cfg = SubsidyConfig.active()
+        try:
+            cc = CorporateContract.objects.only("id", "contract_id").get(
+                contract_id=contract_id,
+                corporation_id=cfg.corporation_id,
             )
+        except CorporateContract.DoesNotExist:
+            return JsonResponse({"ok": False, "error": "not_found"}, status=404)
 
-        if status != "ok":
-            issue_count += 1
+        result = match_contract(cc.pk, persist=False)
+        return JsonResponse({"ok": True, "match": _serialize_match_result(result, include_items=True)})
 
-        analyzed_rows.append(
-            {
-                "name": item["name"],
-                "type_id": type_id,
-                "qty": qty,
-                "is_included": item["is_included"],
-                "status": status,
-                "reason": reason,
-                "expected_qty": expected_qty if expected_item else None,
-                "is_missing": False,
-            }
+
+@method_decorator(csrf_exempt, name="dispatch")
+class AcceptOnceView(PermissionRequiredMixin, View):
+    permission_required = "aasubsidy.review_subsidy"
+
+    @transaction.atomic
+    def post(self, request, contract_id: int):
+        cfg = SubsidyConfig.active()
+        try:
+            cc = CorporateContract.objects.select_for_update().only("id", "contract_id").get(
+                contract_id=contract_id,
+                corporation_id=cfg.corporation_id,
+            )
+        except CorporateContract.DoesNotExist:
+            return JsonResponse({"ok": False, "error": "not_found"}, status=404)
+
+        meta, _ = CorporateContractSubsidy.objects.select_for_update().get_or_create(contract_id=cc.pk)
+        fit_id_raw = (request.POST.get("fit_id") or "").strip()
+        fit_id = int(fit_id_raw) if fit_id_raw.isdigit() else getattr(meta, "forced_fitting_id", None)
+        if not fit_id:
+            preview = match_contract(cc.pk, persist=False)
+            fit_id = preview.matched_fitting_id or preview.evidence.get("selected_fit_id")
+        if not fit_id:
+            return JsonResponse({"ok": False, "error": "fit_required"}, status=400)
+
+        fit = get_object_or_404(Fitting, pk=fit_id)
+        summary = (request.POST.get("summary") or request.POST.get("reason") or "").strip()
+
+        DoctrineContractDecision.objects.create(
+            contract_id=cc.pk,
+            fitting=fit,
+            decision=DoctrineContractDecision.DECISION_ACCEPT_ONCE,
+            summary=summary or "Accepted once during review.",
+            details_json="{}",
+            created_by=request.user,
         )
+        result = match_contract(cc.pk, persist=True)
+        messages.success(request, f"Accepted {fit.name} for this contract once.")
+        return JsonResponse({"ok": True, "match": _serialize_match_result(result)})
 
-    for type_id, expected_item in expected.items():
-        if actual_included_qty.get(type_id, 0) > 0 or actual_any_qty.get(type_id, 0) > 0:
-            continue
-        issue_count += 1
-        analyzed_rows.append(
-            {
-                "name": expected_item["name"],
-                "type_id": type_id,
-                "qty": 0,
-                "is_included": None,
-                "status": "error",
-                "reason": f"Missing required doctrine item (expected {expected_item['expected_qty']}).",
-                "expected_qty": expected_item["expected_qty"],
-                "is_missing": True,
-            }
+
+@method_decorator(csrf_exempt, name="dispatch")
+class CreateRuleView(PermissionRequiredMixin, View):
+    permission_required = "aasubsidy.review_subsidy"
+
+    @transaction.atomic
+    def post(self, request, contract_id: int):
+        cfg = SubsidyConfig.active()
+        try:
+            cc = CorporateContract.objects.select_for_update().only("id", "contract_id").get(
+                contract_id=contract_id,
+                corporation_id=cfg.corporation_id,
+            )
+        except CorporateContract.DoesNotExist:
+            return JsonResponse({"ok": False, "error": "not_found"}, status=404)
+
+        fit_id_raw = (request.POST.get("fit_id") or "").strip()
+        if not fit_id_raw.isdigit():
+            return JsonResponse({"ok": False, "error": "fit_required"}, status=400)
+        fit = get_object_or_404(Fitting, pk=int(fit_id_raw))
+        profile, _ = DoctrineMatchProfile.objects.get_or_create(fitting=fit)
+
+        action = (request.POST.get("action_name") or "").strip()
+        expected_type_raw = (request.POST.get("expected_type_id") or "").strip()
+        actual_type_raw = (request.POST.get("actual_type_id") or "").strip()
+        expected_qty_raw = (request.POST.get("expected_qty") or "").strip()
+        actual_qty_raw = (request.POST.get("actual_qty") or "").strip()
+        category = (request.POST.get("category") or "module").strip()[:32]
+
+        try:
+            expected_type_id = int(expected_type_raw) if expected_type_raw else None
+        except ValueError:
+            expected_type_id = None
+        try:
+            actual_type_id = int(actual_type_raw) if actual_type_raw else None
+        except ValueError:
+            actual_type_id = None
+        try:
+            expected_qty = int(expected_qty_raw) if expected_qty_raw else 0
+        except ValueError:
+            expected_qty = 0
+        try:
+            actual_qty = int(actual_qty_raw) if actual_qty_raw else 0
+        except ValueError:
+            actual_qty = 0
+
+        if action == "optional_item":
+            if not expected_type_id:
+                return JsonResponse({"ok": False, "error": "expected_type_required"}, status=400)
+            rule, _ = DoctrineItemRule.objects.get_or_create(
+                profile=profile,
+                eve_type_id=expected_type_id,
+                defaults={
+                    "rule_kind": DoctrineItemRule.RULE_OPTIONAL,
+                    "quantity_mode": DoctrineItemRule.QTY_EXACT,
+                    "expected_quantity": max(expected_qty, 1),
+                    "category": category,
+                },
+            )
+            rule.rule_kind = DoctrineItemRule.RULE_OPTIONAL
+            if expected_qty > 0:
+                rule.expected_quantity = expected_qty
+            if category:
+                rule.category = category
+            rule.save(update_fields=["rule_kind", "expected_quantity", "category"])
+        elif action == "specific_substitute":
+            if not expected_type_id or not actual_type_id:
+                return JsonResponse({"ok": False, "error": "substitute_types_required"}, status=400)
+            DoctrineSubstitutionRule.objects.get_or_create(
+                profile=profile,
+                expected_type_id=expected_type_id,
+                allowed_type_id=actual_type_id,
+                defaults={
+                    "rule_type": DoctrineSubstitutionRule.RULE_SPECIFIC,
+                    "penalty_points": Decimal("2.00"),
+                },
+            )
+        elif action == "quantity_tolerance":
+            if not expected_type_id or expected_qty <= 0:
+                return JsonResponse({"ok": False, "error": "quantity_context_required"}, status=400)
+            diff = actual_qty - expected_qty
+            mode = DoctrineQuantityTolerance.MODE_ABSOLUTE
+            lower_bound = diff if diff < 0 else 0
+            upper_bound = diff if diff > 0 else 0
+            if diff < 0:
+                mode = DoctrineQuantityTolerance.MODE_MISSING_ONLY
+                lower_bound = 0
+                upper_bound = abs(diff)
+            elif diff > 0:
+                mode = DoctrineQuantityTolerance.MODE_EXTRA_ONLY
+                lower_bound = 0
+                upper_bound = diff
+            tolerance, _ = DoctrineQuantityTolerance.objects.get_or_create(
+                profile=profile,
+                eve_type_id=expected_type_id,
+                mode=mode,
+                lower_bound=lower_bound,
+                upper_bound=upper_bound,
+                defaults={"penalty_points": Decimal("1.00")},
+            )
+            tolerance.penalty_points = tolerance.penalty_points or Decimal("1.00")
+            tolerance.save(update_fields=["penalty_points"])
+        elif action == "ignore_extra_item":
+            target_type_id = actual_type_id or expected_type_id
+            if not target_type_id:
+                return JsonResponse({"ok": False, "error": "type_required"}, status=400)
+            DoctrineItemRule.objects.get_or_create(
+                profile=profile,
+                eve_type_id=target_type_id,
+                defaults={
+                    "rule_kind": DoctrineItemRule.RULE_IGNORE,
+                    "quantity_mode": DoctrineItemRule.QTY_EXACT,
+                    "expected_quantity": 0,
+                    "category": category or "cargo",
+                },
+            )
+        else:
+            return JsonResponse({"ok": False, "error": "unsupported_action"}, status=400)
+
+        DoctrineContractDecision.objects.create(
+            contract_id=cc.pk,
+            fitting=fit,
+            decision=DoctrineContractDecision.DECISION_CREATE_RULE,
+            summary=f"Created rule via review: {action}",
+            details_json="{}",
+            created_by=request.user,
         )
-
-    analyzed_rows.sort(
-        key=lambda row: (
-            0 if row["status"] != "ok" else 1,
-            0 if row["is_included"] is True else (1 if row["is_included"] is None else 2),
-            row["name"].lower(),
-        )
-    )
-
-    return analyzed_rows, {
-        "forced_fit_id": forced_fit.id,
-        "forced_fit_name": forced_fit.name,
-        "has_issues": issue_count > 0,
-        "issue_count": issue_count,
-    }
+        result = match_contract(cc.pk, persist=True)
+        return JsonResponse({"ok": True, "match": _serialize_match_result(result)})
 
 
 class ContractItemsView(PermissionRequiredMixin, View):
@@ -697,37 +798,51 @@ class ContractItemsView(PermissionRequiredMixin, View):
     def get(self, request, contract_id: int):
         cfg = SubsidyConfig.active()
         try:
-            cc = CorporateContract.objects.select_related(
-                "aasubsidy_meta__forced_fitting__ship_type"
-            ).get(
+            cc = CorporateContract.objects.select_related("aasubsidy_meta__forced_fitting").get(
                 contract_id=contract_id, corporation_id=cfg.corporation_id
             )
         except CorporateContract.DoesNotExist:
             return JsonResponse({"ok": False, "error": "not_found"}, status=404)
 
-        items = (
-            CorporateContractItem.objects.filter(contract_id=cc.pk)
-            .values("type_name_id", "type_name__name", "is_included")
-            .annotate(total_qty=Sum("quantity"))
-            .order_by("-is_included", "type_name__name")
-        )
+        result = match_contract(cc.pk, persist=True)
+        analysis = _serialize_match_result(result, include_items=True)
+        items = []
+        for row in analysis.get("items", []):
+            rendered = dict(row)
+            included_qty = int(rendered.get("included_qty") or 0)
+            excluded_qty = int(rendered.get("excluded_qty") or 0)
+            if included_qty > 0:
+                rendered["is_included"] = True
+            elif excluded_qty > 0:
+                rendered["is_included"] = False
+            else:
+                rendered["is_included"] = None
+            rendered["qty"] = int(rendered.get("qty") or 0)
+            items.append(rendered)
 
-        results = [
-            {
-                "name": item["type_name__name"] or str(item["type_name_id"]),
-                "type_id": int(item["type_name_id"]),
-                "qty": item["total_qty"],
-                "is_included": item["is_included"],
-            }
-            for item in items
-        ]
-
-        analysis = None
-        forced_fit = getattr(getattr(cc, "aasubsidy_meta", None), "forced_fitting", None)
-        if forced_fit:
-            results, analysis = _analyze_items_for_forced_fit(
-                forced_fit=forced_fit,
-                item_rows=results,
+        if not items:
+            raw_items = (
+                CorporateContractItem.objects.filter(contract_id=cc.pk)
+                .values("type_name_id", "type_name__name", "is_included")
+                .annotate(total_qty=Sum("quantity"))
+                .order_by("-is_included", "type_name__name")
             )
+            items = [
+                {
+                    "name": item["type_name__name"] or str(item["type_name_id"]),
+                    "type_id": int(item["type_name_id"]),
+                    "qty": int(item["total_qty"] or 0),
+                    "included_qty": int(item["total_qty"] or 0) if item["is_included"] else 0,
+                    "excluded_qty": int(item["total_qty"] or 0) if not item["is_included"] else 0,
+                    "is_included": item["is_included"],
+                    "status": "ok",
+                    "reason": "",
+                    "actions": [],
+                }
+                for item in raw_items
+            ]
 
-        return JsonResponse({"ok": True, "items": results, "analysis": analysis})
+        analysis["can_accept_once"] = bool(
+            analysis.get("selected_fit_id") and analysis.get("match_status") != "matched"
+        )
+        return JsonResponse({"ok": True, "items": items, "analysis": analysis})

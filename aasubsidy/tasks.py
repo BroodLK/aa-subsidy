@@ -1,6 +1,7 @@
 import requests
 from celery import shared_task
 from django.db import Error, transaction
+from django.core.exceptions import ObjectDoesNotExist
 from allianceauth.services.hooks import get_extension_logger
 
 from .models import SubsidyItemPrice
@@ -18,6 +19,17 @@ try:
 except Exception:
     EveType = None
     EveMarketPrice = None
+
+
+def _is_missing_corporation_audit(exc: Exception) -> bool:
+    if not isinstance(exc, ObjectDoesNotExist):
+        return False
+    exc_type = exc.__class__
+    return (
+        exc_type.__name__ == "DoesNotExist"
+        and "corptools.models.audits" in getattr(exc_type, "__module__", "")
+        and "CorporationAudit" in getattr(exc_type, "__qualname__", "")
+    )
 
 
 def _force_refresh_corporate_contracts(corporation_id: int) -> dict:
@@ -47,6 +59,17 @@ def _force_refresh_corporate_contracts(corporation_id: int) -> dict:
             "contracts_refreshed": len(refreshed_ids),
         }
     except Exception as exc:
+        if _is_missing_corporation_audit(exc):
+            logger.info(
+                "Skipping forced corptools contract refresh for corporation %s: no CorporationAudit is configured.",
+                corporation_id,
+            )
+            return {
+                "attempted": False,
+                "ok": False,
+                "skipped": True,
+                "error": "missing_corporation_audit",
+            }
         logger.warning(
             "Forced corptools contract refresh failed for corporation %s: %s",
             corporation_id,
@@ -83,6 +106,7 @@ def import_corporate_contract_reviews(
     chunk_size: int = 1000,
     force_refresh_contracts: bool = True,
 ) -> dict:
+    """Imports contract subsidies idempotently; refreshes contracts optionally; exempts qualifying records"""
     from .models import SubsidyConfig
     if corporation_id is None:
         corporation_id = SubsidyConfig.active().corporation_id

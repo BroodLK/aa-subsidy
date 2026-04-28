@@ -1,3 +1,5 @@
+import json
+
 from django.db import models
 
 
@@ -103,6 +105,287 @@ class CorporateContractSubsidy(models.Model):
         if self.review_status == -1:
             return -1
         return 0
+
+
+class DoctrineMatchProfile(models.Model):
+    fitting = models.OneToOneField(
+        "fittings.Fitting",
+        on_delete=models.CASCADE,
+        related_name="match_profile",
+    )
+    enabled = models.BooleanField(default=True)
+    auto_match_threshold = models.DecimalField(max_digits=5, decimal_places=2, default=95)
+    review_threshold = models.DecimalField(max_digits=5, decimal_places=2, default=80)
+    allow_extra_items = models.BooleanField(default=True)
+    allow_meta_variants = models.BooleanField(default=False)
+    allow_faction_variants = models.BooleanField(default=False)
+    notes = models.TextField(blank=True, default="")
+
+    class Meta:
+        verbose_name = "Doctrine Match Profile"
+        verbose_name_plural = "Doctrine Match Profiles"
+
+    def __str__(self) -> str:
+        return f"Match Profile: {self.fitting_id}"
+
+
+class DoctrineItemRule(models.Model):
+    RULE_REQUIRED = "required"
+    RULE_OPTIONAL = "optional"
+    RULE_CARGO = "cargo"
+    RULE_IGNORE = "ignore"
+    RULE_KIND = (
+        (RULE_REQUIRED, "Required"),
+        (RULE_OPTIONAL, "Optional"),
+        (RULE_CARGO, "Cargo"),
+        (RULE_IGNORE, "Ignore"),
+    )
+
+    QTY_EXACT = "exact"
+    QTY_MINIMUM = "minimum"
+    QTY_RANGE = "range"
+    QTY_MODE = (
+        (QTY_EXACT, "Exact"),
+        (QTY_MINIMUM, "Minimum"),
+        (QTY_RANGE, "Range"),
+    )
+
+    profile = models.ForeignKey(
+        DoctrineMatchProfile,
+        on_delete=models.CASCADE,
+        related_name="item_rules",
+    )
+    eve_type = models.ForeignKey(
+        "eveuniverse.EveType",
+        on_delete=models.CASCADE,
+        related_name="+",
+    )
+    rule_kind = models.CharField(max_length=16, choices=RULE_KIND, default=RULE_REQUIRED)
+    quantity_mode = models.CharField(max_length=16, choices=QTY_MODE, default=QTY_EXACT)
+    expected_quantity = models.IntegerField(default=1)
+    min_quantity = models.IntegerField(default=0)
+    max_quantity = models.IntegerField(default=0)
+    category = models.CharField(max_length=32, default="module")
+    slot_label = models.CharField(max_length=64, blank=True, default="")
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        verbose_name = "Doctrine Item Rule"
+        verbose_name_plural = "Doctrine Item Rules"
+        ordering = ("sort_order", "id")
+
+    def __str__(self) -> str:
+        return f"{self.profile_id}:{self.eve_type_id}:{self.rule_kind}"
+
+
+class DoctrineSubstitutionRule(models.Model):
+    RULE_SPECIFIC = "specific"
+    RULE_META_FAMILY = "meta_family"
+    RULE_MARKET_GROUP = "market_group"
+    RULE_GROUP = "group"
+    RULE_TYPE = (
+        (RULE_SPECIFIC, "Specific Type Substitute"),
+        (RULE_META_FAMILY, "Same Meta Family"),
+        (RULE_MARKET_GROUP, "Same Market Group"),
+        (RULE_GROUP, "Same Group"),
+    )
+
+    profile = models.ForeignKey(
+        DoctrineMatchProfile,
+        on_delete=models.CASCADE,
+        related_name="substitutions",
+    )
+    expected_type = models.ForeignKey(
+        "eveuniverse.EveType",
+        on_delete=models.CASCADE,
+        related_name="+",
+    )
+    allowed_type = models.ForeignKey(
+        "eveuniverse.EveType",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="+",
+    )
+    rule_type = models.CharField(max_length=20, choices=RULE_TYPE, default=RULE_SPECIFIC)
+    max_meta_level_delta = models.IntegerField(default=0)
+    same_slot_only = models.BooleanField(default=True)
+    same_group_only = models.BooleanField(default=True)
+    penalty_points = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    notes = models.TextField(blank=True, default="")
+
+    class Meta:
+        verbose_name = "Doctrine Substitution Rule"
+        verbose_name_plural = "Doctrine Substitution Rules"
+        ordering = ("expected_type_id", "id")
+
+    def __str__(self) -> str:
+        return f"{self.profile_id}:{self.expected_type_id}->{self.allowed_type_id or self.rule_type}"
+
+
+class DoctrineQuantityTolerance(models.Model):
+    MODE_ABSOLUTE = "absolute"
+    MODE_PERCENT = "percent"
+    MODE_MISSING_ONLY = "missing_only"
+    MODE_EXTRA_ONLY = "extra_only"
+    MODE_CHOICES = (
+        (MODE_ABSOLUTE, "Absolute"),
+        (MODE_PERCENT, "Percent"),
+        (MODE_MISSING_ONLY, "Missing Only"),
+        (MODE_EXTRA_ONLY, "Extra Only"),
+    )
+
+    profile = models.ForeignKey(
+        DoctrineMatchProfile,
+        on_delete=models.CASCADE,
+        related_name="quantity_tolerances",
+    )
+    eve_type = models.ForeignKey(
+        "eveuniverse.EveType",
+        on_delete=models.CASCADE,
+        related_name="+",
+    )
+    mode = models.CharField(max_length=16, choices=MODE_CHOICES, default=MODE_ABSOLUTE)
+    lower_bound = models.IntegerField(default=0)
+    upper_bound = models.IntegerField(default=0)
+    penalty_points = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+
+    class Meta:
+        verbose_name = "Doctrine Quantity Tolerance"
+        verbose_name_plural = "Doctrine Quantity Tolerances"
+        ordering = ("eve_type_id", "id")
+
+    def __str__(self) -> str:
+        return f"{self.profile_id}:{self.eve_type_id}:{self.mode}"
+
+
+class DoctrineMatchResult(models.Model):
+    STATUS_MATCHED = "matched"
+    STATUS_NEEDS_REVIEW = "needs_review"
+    STATUS_REJECTED = "rejected"
+    STATUS_CHOICES = (
+        (STATUS_MATCHED, "Matched"),
+        (STATUS_NEEDS_REVIEW, "Needs Review"),
+        (STATUS_REJECTED, "Rejected"),
+    )
+
+    SOURCE_AUTO = "auto"
+    SOURCE_FORCED = "forced"
+    SOURCE_LEARNED = "learned_rule"
+    SOURCE_MANUAL_ACCEPT = "manual_accept"
+    SOURCE_CHOICES = (
+        (SOURCE_AUTO, "Auto"),
+        (SOURCE_FORCED, "Forced"),
+        (SOURCE_LEARNED, "Learned Rule"),
+        (SOURCE_MANUAL_ACCEPT, "Manual Accept"),
+    )
+
+    contract = models.OneToOneField(
+        "corptools.CorporateContract",
+        on_delete=models.CASCADE,
+        related_name="doctrine_match",
+        db_index=True,
+    )
+    matched_fitting = models.ForeignKey(
+        "fittings.Fitting",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="doctrine_match_results",
+    )
+    match_source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default=SOURCE_AUTO)
+    match_status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_NEEDS_REVIEW)
+    score = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    hard_failures_json = models.TextField(default="[]", blank=True)
+    warnings_json = models.TextField(default="[]", blank=True)
+    evidence_json = models.TextField(default="{}", blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Doctrine Match Result"
+        verbose_name_plural = "Doctrine Match Results"
+        indexes = [
+            models.Index(fields=["match_source"], name="dmr_match_source_idx"),
+            models.Index(fields=["match_status"], name="dmr_match_status_idx"),
+            models.Index(fields=["updated_at"], name="dmr_updated_at_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.contract_id}:{self.matched_fitting_id or 'none'}:{self.match_status}"
+
+    @staticmethod
+    def _loads(raw: str, default):
+        try:
+            return json.loads(raw or "")
+        except (TypeError, ValueError):
+            return default
+
+    @property
+    def hard_failures(self):
+        return self._loads(self.hard_failures_json, [])
+
+    @property
+    def warnings(self):
+        return self._loads(self.warnings_json, [])
+
+    @property
+    def evidence(self):
+        return self._loads(self.evidence_json, {})
+
+
+class DoctrineContractDecision(models.Model):
+    DECISION_ACCEPT_ONCE = "accept_once"
+    DECISION_REJECT_ONCE = "reject_once"
+    DECISION_CREATE_RULE = "create_rule"
+    DECISION_CREATE_VARIANT = "create_variant"
+    DECISION = (
+        (DECISION_ACCEPT_ONCE, "Accept Once"),
+        (DECISION_REJECT_ONCE, "Reject Once"),
+        (DECISION_CREATE_RULE, "Create Rule"),
+        (DECISION_CREATE_VARIANT, "Create Variant"),
+    )
+
+    contract = models.ForeignKey(
+        "corptools.CorporateContract",
+        on_delete=models.CASCADE,
+        related_name="match_decisions",
+    )
+    fitting = models.ForeignKey(
+        "fittings.Fitting",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    decision = models.CharField(max_length=20, choices=DECISION)
+    summary = models.CharField(max_length=255, default="")
+    details_json = models.TextField(default="{}", blank=True)
+    created_by = models.ForeignKey(
+        "auth.User",
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Doctrine Contract Decision"
+        verbose_name_plural = "Doctrine Contract Decisions"
+        ordering = ("-created_at", "-id")
+        indexes = [
+            models.Index(fields=["decision"], name="dcd_decision_idx"),
+            models.Index(fields=["created_at"], name="dcd_created_at_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.contract_id}:{self.decision}"
+
+    @property
+    def details(self):
+        try:
+            return json.loads(self.details_json or "{}")
+        except (TypeError, ValueError):
+            return {}
 
 class SubsidyConfig(models.Model):
     PRICE_BASIS_CHOICES = (
