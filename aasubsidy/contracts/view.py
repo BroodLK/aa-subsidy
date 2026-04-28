@@ -461,7 +461,17 @@ class ReviewSummariesView(PermissionRequiredMixin, View):
             .order_by("-date_issued")
         )
 
-        results = get_or_match_contracts([contract.pk for contract in contracts], persist=True)
+        # Calculate and persist doctrine matches for all contracts
+        contract_pks = [contract.pk for contract in contracts]
+        results = get_or_match_contracts(contract_pks, persist=True)
+
+        # Ensure all contracts have match results
+        missing_pks = [pk for pk in contract_pks if pk not in results]
+        if missing_pks:
+            from .matching import match_contracts
+            additional_results = match_contracts(missing_pks, persist=True)
+            results.update(additional_results)
+
         pricing_fit_ids = {
             int(result.matched_fitting_id or (result.evidence or {}).get("selected_fit_id") or 0)
             for result in results.values()
