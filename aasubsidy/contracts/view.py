@@ -423,7 +423,18 @@ class ReviewerView(PermissionRequiredMixin, TemplateView):
         end = timezone.now()
         start = end - timedelta(days=30)
         cfg = SubsidyConfig.active()
-        ctx["contracts"] = reviewer_table(start, end, corporation_id=cfg.corporation_id)
+        contracts = reviewer_table(start, end, corporation_id=cfg.corporation_id)
+
+        # DEBUG: Print what we're rendering
+        print(f"\n=== REVIEWER VIEW RENDERING ===")
+        print(f"Total contracts to render: {len(contracts)}")
+        if contracts:
+            first = contracts[0]
+            print(f"First contract doctrine HTML: {first.get('doctrine', 'MISSING')[:100]}")
+            print(f"First contract data: id={first.get('id')}, match_source={first.get('match_source')}, match_status={first.get('match_status')}")
+        print("=== END RENDERING ===\n")
+
+        ctx["contracts"] = contracts
         ctx["all_fits"] = Fitting.objects.only("id", "name").order_by("name")
         if self.request.user.is_authenticated:
             pref = UserTablePreference.objects.filter(
