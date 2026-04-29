@@ -298,6 +298,7 @@
                             </div>
                             <div class="d-flex gap-2">
                                 ${analysis.can_accept_once ? `<button type="button" class="btn btn-sm btn-outline-success accept-once-btn" data-contract="${id}" data-fit="${analysis.selected_fit_id || ''}">${window.AASubsidyConfig.lang.acceptOnce}</button>` : ''}
+                                ${analysis.can_undo_accept_once ? `<button type="button" class="btn btn-sm btn-outline-warning undo-accept-once-btn" data-contract="${id}">${window.AASubsidyConfig.lang.undoAcceptOnce}</button>` : ''}
                             </div>
                         </div>
                         ${candidateText ? `<div class="mt-2 text-muted">Candidates: ${candidateText}</div>` : ''}
@@ -631,6 +632,28 @@
               'X-CSRFToken': token
             },
             body: new URLSearchParams({ fit_id: fitId }).toString()
+          });
+        } finally {
+          location.reload();
+        }
+      }
+
+      const undoBtn = e.target.closest('.undo-accept-once-btn');
+      if (undoBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const contractId = undoBtn.getAttribute('data-contract');
+        if (!contractId) return;
+        const token = (document.querySelector('[name=csrfmiddlewaretoken]') || {}).value || '';
+        showLoading();
+        try {
+          await fetch(window.AASubsidyConfig.undoAcceptOnceUrl.replace("/0/", `/${contractId}/`), {
+            method: 'POST',
+            headers: {
+              'X-Requested-With': 'XMLHttpRequest',
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+              'X-CSRFToken': token
+            }
           });
         } finally {
           location.reload();

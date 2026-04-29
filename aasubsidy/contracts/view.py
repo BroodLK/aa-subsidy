@@ -769,6 +769,35 @@ class AcceptOnceView(PermissionRequiredMixin, View):
 
 
 @method_decorator(csrf_exempt, name="dispatch")
+class UndoAcceptOnceView(PermissionRequiredMixin, View):
+    permission_required = "aasubsidy.review_subsidy"
+
+    @transaction.atomic
+    def post(self, request, contract_id: int):
+        cfg = SubsidyConfig.active()
+        try:
+            cc = CorporateContract.objects.select_for_update().only("id", "contract_id").get(
+                contract_id=contract_id,
+                corporation_id=cfg.corporation_id,
+            )
+        except CorporateContract.DoesNotExist:
+            return JsonResponse({"ok": False, "error": "not_found"}, status=404)
+
+        # Delete the most recent accept_once decision
+        deleted_count, _ = DoctrineContractDecision.objects.filter(
+            contract_id=cc.pk,
+            decision=DoctrineContractDecision.DECISION_ACCEPT_ONCE,
+        ).order_by("-created_at", "-id")[:1].delete()
+
+        if deleted_count == 0:
+            return JsonResponse({"ok": False, "error": "no_decision_found"}, status=404)
+
+        result = match_contract(cc.pk, persist=True)
+        messages.success(request, "Undone accept once decision.")
+        return JsonResponse({"ok": True, "match": _serialize_match_result(result)})
+
+
+@method_decorator(csrf_exempt, name="dispatch")
 class CreateRuleView(PermissionRequiredMixin, View):
     permission_required = "aasubsidy.review_subsidy"
 
@@ -952,4 +981,9 @@ class ContractItemsView(PermissionRequiredMixin, View):
         analysis["can_accept_once"] = bool(
             analysis.get("selected_fit_id") and analysis.get("match_status") != "matched"
         )
+
+        # Check if we can undo an accept_once decision
+        decision = analysis.get("evidence", {}).get("decision", {})
+        analysis["can_undo_accept_once"] = decision.get("decision") == "accept_once"
+
         return JsonResponse({"ok": True, "items": items, "analysis": analysis})

@@ -442,8 +442,13 @@ def evaluate_contract_against_definition(
                 )
             )
             if not rule.is_hull:
-                actions.append("optional_item")
-                actions.append("quantity_tolerance")
+                # If item is completely missing, only offer "allow missing" option
+                if actual_qty == 0:
+                    actions.append("optional_item")
+                else:
+                    # If some quantity exists but not enough, offer both options
+                    actions.append("optional_item")
+                    actions.append("quantity_tolerance")
         elif maximum_qty is not None and actual_qty > maximum_qty:
             tolerance = _match_tolerance(
                 fitting.quantity_tolerances.get(rule.expected_type_id, []),

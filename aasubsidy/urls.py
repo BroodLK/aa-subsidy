@@ -22,6 +22,7 @@ urlpatterns = [
     path("contract/<int:contract_id>/force-fit/", v.ForceFitView.as_view(), name="force_fit"),
     path("contract/<int:contract_id>/match-preview/", v.MatchPreviewView.as_view(), name="match_preview"),
     path("contract/<int:contract_id>/accept-once/", v.AcceptOnceView.as_view(), name="accept_once"),
+    path("contract/<int:contract_id>/undo-accept-once/", v.UndoAcceptOnceView.as_view(), name="undo_accept_once"),
     path("contract/<int:contract_id>/create-rule/", v.CreateRuleView.as_view(), name="create_rule"),
     path("contract/<int:contract_id>/items/", v.ContractItemsView.as_view(), name="contract_items"),
     path("admin/doctrines/", DoctrineRequestsAdminView.as_view(), name="doctrine_admin"),
