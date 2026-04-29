@@ -1113,37 +1113,6 @@ def _select_result(
 ) -> MatchResultData:
     candidate_by_fit = {candidate.fitting_id: candidate for candidate in candidates}
 
-    if manual_decision and manual_decision.get("decision") == "accept_once":
-        target_fit_id = manual_decision.get("fitting_id")
-        candidate = candidate_by_fit.get(target_fit_id)
-        if candidate is not None:
-            evidence = dict(candidate.evidence)
-            evidence["decision"] = manual_decision
-            return MatchResultData(
-                contract_id=contract_id,
-                matched_fitting_id=candidate.fitting_id,
-                matched_fitting_name=candidate.fitting_name,
-                match_source="manual_accept",
-                match_status="matched",
-                score=max(candidate.score, candidate.review_threshold).quantize(Decimal("0.01")),
-                hard_failures=candidate.hard_failures,
-                warnings=candidate.warnings,
-                evidence=evidence,
-            )
-
-    if manual_decision and manual_decision.get("decision") == "reject_once":
-        return MatchResultData(
-            contract_id=contract_id,
-            matched_fitting_id=None,
-            matched_fitting_name=None,
-            match_source="auto",
-            match_status="no_match",
-            score=ZERO,
-            hard_failures=[_issue("error", "manual_reject", "Manually marked as no match.")],
-            warnings=[],
-            evidence={"decision": manual_decision, "candidates": _candidate_summaries(candidates)},
-        )
-
     if forced_fit_id:
         candidate = candidate_by_fit.get(forced_fit_id)
         if candidate is None:
@@ -1174,6 +1143,36 @@ def _select_result(
             evidence=evidence,
         )
 
+    if manual_decision and manual_decision.get("decision") == "accept_once":
+        target_fit_id = manual_decision.get("fitting_id")
+        candidate = candidate_by_fit.get(target_fit_id)
+        if candidate is not None:
+            evidence = dict(candidate.evidence)
+            evidence["decision"] = manual_decision
+            return MatchResultData(
+                contract_id=contract_id,
+                matched_fitting_id=candidate.fitting_id,
+                matched_fitting_name=candidate.fitting_name,
+                match_source="manual_accept",
+                match_status="matched",
+                score=max(candidate.score, candidate.review_threshold).quantize(Decimal("0.01")),
+                hard_failures=candidate.hard_failures,
+                warnings=candidate.warnings,
+                evidence=evidence,
+            )
+
+    if manual_decision and manual_decision.get("decision") == "reject_once":
+        return MatchResultData(
+            contract_id=contract_id,
+            matched_fitting_id=None,
+            matched_fitting_name=None,
+            match_source="auto",
+            match_status="no_match",
+            score=ZERO,
+            hard_failures=[_issue("error", "manual_reject", "Manually marked as no match.")],
+            warnings=[],
+            evidence={"decision": manual_decision, "candidates": _candidate_summaries(candidates)},
+        )
     viable = [candidate for candidate in candidates if candidate.viable]
     viable.sort(key=lambda candidate: (-candidate.score, candidate.fitting_name.lower(), candidate.fitting_id))
 
@@ -1739,10 +1738,22 @@ def match_contracts(
     return results
 
 
-def match_contract(contract_id: int, *, forced_fit_id: int | None = None, persist: bool = True) -> MatchResultData:
+_MATCH_CONTRACT_RELOAD = object()
+
+
+def match_contract(
+    contract_id: int,
+    *,
+    forced_fit_id: int | None = _MATCH_CONTRACT_RELOAD,
+    persist: bool = True,
+) -> MatchResultData:
+    forced_fit_ids = None
+    if forced_fit_id is not _MATCH_CONTRACT_RELOAD:
+        forced_fit_ids = {int(contract_id): forced_fit_id}
+
     results = match_contracts(
         [int(contract_id)],
-        forced_fit_ids={int(contract_id): forced_fit_id} if forced_fit_id is not None else None,
+        forced_fit_ids=forced_fit_ids,
         persist=persist,
     )
     return results[int(contract_id)]

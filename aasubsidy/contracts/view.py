@@ -425,6 +425,7 @@ class ReviewerView(PermissionRequiredMixin, TemplateView):
         cfg = SubsidyConfig.active()
         ctx["contracts"] = reviewer_table(start, end, corporation_id=cfg.corporation_id)
         ctx["all_fits"] = Fitting.objects.only("id", "name").order_by("name")
+        ctx["close_match_threshold"] = float(cfg.close_match_threshold)
         if self.request.user.is_authenticated:
             pref = UserTablePreference.objects.filter(
                 user=self.request.user, table_key="contracts"
@@ -461,9 +462,16 @@ class ReviewSummariesView(PermissionRequiredMixin, View):
             .order_by("-date_issued")
         )
 
-        # Calculate and persist doctrine matches for all contracts
+        # Fetch existing doctrine matches
         contract_pks = [contract.pk for contract in contracts]
         results = get_or_match_contracts(contract_pks, persist=True)
+
+        # Trigger matching for any missing results (AJAX refresh context)
+        missing_pks = [pk for pk in contract_pks if pk not in results]
+        if missing_pks:
+            from .matching import match_contracts
+            additional_results = match_contracts(missing_pks, persist=True)
+            results.update(additional_results)
 
         pricing_fit_ids = {
             int(result.matched_fitting_id or (result.evidence or {}).get("selected_fit_id") or 0)
@@ -688,17 +696,34 @@ class ForceFitView(PermissionRequiredMixin, View):
 
         meta, _ = CorporateContractSubsidy.objects.select_for_update().get_or_create(contract_id=cc.pk)
 
+        forced_fit_id = None
         if not fit_id_raw or fit_id_raw == "__clear__":
             meta.forced_fitting = None
+            # Also clear any manual decisions if we are resetting to auto
+            DoctrineContractDecision.objects.filter(
+                contract=cc,
+                decision__in=[
+                    DoctrineContractDecision.DECISION_ACCEPT_ONCE,
+                    DoctrineContractDecision.DECISION_REJECT_ONCE,
+                ],
+            ).delete()
         else:
             try:
-                fit_id = int(fit_id_raw)
-                meta.forced_fitting = get_object_or_404(Fitting, pk=fit_id)
+                forced_fit_id = int(fit_id_raw)
+                meta.forced_fitting = get_object_or_404(Fitting, pk=forced_fit_id)
+                # When forcing a fit, it should override any "accept once" decision for other fits
+                DoctrineContractDecision.objects.filter(
+                    contract=cc,
+                    decision__in=[
+                        DoctrineContractDecision.DECISION_ACCEPT_ONCE,
+                        DoctrineContractDecision.DECISION_REJECT_ONCE,
+                    ],
+                ).delete()
             except Exception:
                 return JsonResponse({"ok": False, "error": "invalid_fit"}, status=400)
 
         meta.save(update_fields=["forced_fitting"])
-        result = match_contract(cc.pk, persist=True)
+        result = match_contract(cc.pk, forced_fit_id=forced_fit_id, persist=True)
         return JsonResponse({"ok": True, "match": _serialize_match_result(result)})
 
 

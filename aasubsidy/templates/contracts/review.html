@@ -259,6 +259,7 @@
         createRuleUrl: "{% url 'aasubsidy:create_rule' 0 %}",
         approveUrl: "{% url 'aasubsidy:approve' 0 %}",
         denyUrl: "{% url 'aasubsidy:deny' 0 %}",
+        closeMatchThreshold: {{ close_match_threshold|default:70.0 }},
         tablePref: {{ table_pref|default:"null"|safe }},
         isAuthenticated: {{ request.user.is_authenticated|yesno:'true,false' }},
         lang: {

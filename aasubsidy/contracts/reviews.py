@@ -149,12 +149,13 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
 
         # Simplified doctrine display
         score = float(result.score or 0) if result else 0
+        close_match_threshold = float(cfg_model.close_match_threshold or 70.0)
         if not result or selected_name == "No Match":
             doctrine_html = '<div class="text-muted">No Match</div>'
         elif score >= 100.0:
             # Perfect match - just show the name
             doctrine_html = f'<div>{selected_name}</div>'
-        elif score >= 90.0:
+        elif score >= close_match_threshold:
             # Close match - show as "Close match to X"
             doctrine_html = f'<div class="text-warning">Close match to {selected_name}</div>'
         else:

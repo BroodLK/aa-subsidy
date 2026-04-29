@@ -129,6 +129,7 @@
 
       const selectedName = analysis.selected_fit_name || 'No Match';
       const score = Number(analysis.score || 0);
+      const threshold = Number(window.AASubsidyConfig.closeMatchThreshold || 70.0);
 
       // Simplified doctrine display
       const doctrineIdx = getColumnIndex('doctrine');
@@ -142,7 +143,7 @@
         } else if (score >= 100.0) {
           // Perfect match - just show the name
           doctrineHtml = `<div>${selectedName}</div>`;
-        } else if (score >= 90.0) {
+        } else if (score >= threshold) {
           // Close match
           doctrineHtml = `<div class="text-warning">Close match to ${selectedName}</div>`;
         } else {
@@ -876,15 +877,14 @@
       });
     }
 
-    // DISABLED: Server-side rendering now provides correct match data on initial page load
-    // No need to refresh via AJAX on page load - it just overwrites the correct data!
-    // refreshRowSummariesOnLoad()
-    //   .catch((err) => {
-    //     console.error('Initial review summary refresh failed:', err);
-    //   })
-    //   .finally(() => {
-    //     hideLoading();
-    //   });
+    // ENABLED: AJAX refresh fills in matches missing from initial fast DB-only load
+    refreshRowSummariesOnLoad()
+      .catch((err) => {
+        console.error('Initial review summary refresh failed:', err);
+      })
+      .finally(() => {
+        hideLoading();
+      });
 
     // Just hide the loading spinner immediately since data is already rendered
     hideLoading();
