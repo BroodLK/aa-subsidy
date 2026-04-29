@@ -135,14 +135,21 @@ def doctrine_stock_summary(
 
         contract_locations[cid] = locs
 
+    contract_pks = list(contract_qs.values_list("pk", flat=True))
+
     # DEBUG: Check first few contract locations
     print(f"\n=== CONTRACT LOCATIONS DEBUG ===")
     print(f"Built contract_locations for {len(contract_locations)} contracts")
-    for cid, locs in list(contract_locations.items())[:3]:
-        print(f"  Contract ID (pk) {cid}: locations = {locs}")
-    print("=== END ===\n")
+    print(f"contract_pks has {len(contract_pks)} contracts")
+    print(f"First 3 keys in contract_locations: {list(contract_locations.keys())[:3]}")
+    print(f"First 3 pks in contract_pks: {contract_pks[:3]}")
 
-    contract_pks = list(contract_qs.values_list("pk", flat=True))
+    # Check if they match
+    keys_set = set(contract_locations.keys())
+    pks_set = set(contract_pks)
+    in_both = keys_set & pks_set
+    print(f"Overlap: {len(in_both)} contracts in both")
+    print("=== END ===\n")
     match_map = get_or_match_contracts(contract_pks, persist=True, refresh=False)
 
     # DEBUG
