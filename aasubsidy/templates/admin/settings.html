@@ -83,19 +83,25 @@
         </div>
 
         <div class="alert alert-info mt-4">
-          <h6 class="alert-heading">{% trans "How Doctrine Scoring Works" %}</h6>
-          <p class="mb-2"><strong>{% trans "Starting Score:" %}</strong> {% trans "Each contract starts at 100 points when evaluated against a doctrine fit." %}</p>
+          <h6 class="alert-heading">{% trans "How Doctrine Scoring Works (Item-Count System)" %}</h6>
+          <p class="mb-2"><strong>{% trans "Scoring Method:" %}</strong></p>
+          <ul class="mb-2">
+            <li>{% trans "Each module/item = 1 point" %}</li>
+            <li>{% trans "Each consumable stack (ammo/drones/paste/boosters) = 1 point" %}</li>
+            <li>{% trans "Start with max points (all expected items)" %}</li>
+            <li>{% trans "Subtract penalties for issues" %}</li>
+            <li><strong>{% trans "Formula:" %}</strong> {% trans "(expected_items - penalties) / expected_items × 100" %}</li>
+          </ul>
           <p class="mb-2"><strong>{% trans "Penalties:" %}</strong></p>
           <ul class="mb-2">
-            <li>{% trans "Wrong hull: Score forced to 0% (automatic fail)" %}</li>
-            <li>{% trans "Missing required item: Score forced to 0% (automatic fail)" %}</li>
-            <li>{% trans "Wrong quantity (above max): Score forced to 0% (automatic fail)" %}</li>
-            <li>{% trans "Extra items not allowed: Score forced to 0% (automatic fail)" %}</li>
-            <li>{% trans "Optional item missing: -1 point" %}</li>
-            <li>{% trans "Quantity tolerance (learned): -1 to -2 points" %}</li>
-            <li>{% trans "Substitution (meta/faction): -5 points per substitution" %}</li>
-            <li>{% trans "Extra quantity in cargo/ammo: -1 point" %}</li>
+            <li><strong>{% trans "Wrong hull:" %}</strong> {% trans "Score forced to 0% (automatic fail)" %}</li>
+            <li><strong>{% trans "Missing required item:" %}</strong> {% trans "-1 point" %}</li>
+            <li><strong>{% trans "Missing optional item:" %}</strong> {% trans "-1 point" %}</li>
+            <li><strong>{% trans "Extra unexpected item:" %}</strong> {% trans "-1 point" %}</li>
+            <li><strong>{% trans "Substitution (any type):" %}</strong> {% trans "-1 point" %}</li>
+            <li><strong>{% trans "Wrong consumable quantity (±20%):" %}</strong> {% trans "-0.5 points" %}</li>
           </ul>
+          <p class="mb-2"><strong>{% trans "Example:" %}</strong> {% trans "32 expected items, missing 1 drone stack, extra 1 unwanted item = (32-2)/32 = 93.75%" %}</p>
           <p class="mb-2"><strong>{% trans "Match Categories:" %}</strong></p>
           <ul class="mb-0">
             <li><strong>100%:</strong> {% trans "Perfect match - auto-approved if profile allows" %}</li>
