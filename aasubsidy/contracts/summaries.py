@@ -123,7 +123,8 @@ def doctrine_stock_summary(
 
     contract_locations = {}
     for c in contract_data:
-        cid = c["id"]
+        # CRITICAL: Convert to int because .values() returns strings, but match_map uses ints
+        cid = int(c["id"])
         locs = {c["start_location_id"]}
 
         # Add the system ID from FK if present
