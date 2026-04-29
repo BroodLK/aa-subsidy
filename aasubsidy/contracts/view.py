@@ -723,7 +723,8 @@ class MatchPreviewView(PermissionRequiredMixin, View):
         except CorporateContract.DoesNotExist:
             return JsonResponse({"ok": False, "error": "not_found"}, status=404)
 
-        result = get_or_match_contract(cc.pk, persist=True)
+        # IMPORTANT: Use refresh=False to respect forced matches
+        result = get_or_match_contract(cc.pk, persist=True, refresh=False)
         return JsonResponse({"ok": True, "match": _serialize_match_result(result, include_items=True)})
 
 
@@ -909,7 +910,8 @@ class ContractItemsView(PermissionRequiredMixin, View):
         except CorporateContract.DoesNotExist:
             return JsonResponse({"ok": False, "error": "not_found"}, status=404)
 
-        result = get_or_match_contract(cc.pk, persist=True)
+        # IMPORTANT: Use refresh=False to respect forced matches
+        result = get_or_match_contract(cc.pk, persist=True, refresh=False)
         analysis = _serialize_match_result(result, include_items=True)
         items = []
         for row in analysis.get("items", []):

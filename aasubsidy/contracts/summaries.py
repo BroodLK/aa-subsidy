@@ -137,6 +137,18 @@ def doctrine_stock_summary(
 
     contract_pks = list(contract_qs.values_list("pk", flat=True))
     match_map = get_or_match_contracts(contract_pks, persist=True, refresh=False)
+
+    # DEBUG
+    print(f"\n=== SUMMARY PAGE DEBUG ===")
+    print(f"Found {len(contract_pks)} contracts")
+    print(f"Got {len(match_map)} match results")
+    matched_count = sum(1 for r in match_map.values() if r.matched_fitting_id)
+    print(f"Of those, {matched_count} have a matched_fitting_id")
+    # Show first 3 matches
+    for pk, result in list(match_map.items())[:3]:
+        print(f"  PK={pk}: fitting_id={result.matched_fitting_id}, name={result.matched_fitting_name}, status={result.match_status}, source={result.match_source}")
+    print("=== END DEBUG ===\n")
+
     # Count all contracts that have a matched fitting, regardless of status
     # This includes "matched", "needs_review", and even forced matches
     matched_fit_map: Dict[int, int] = {
