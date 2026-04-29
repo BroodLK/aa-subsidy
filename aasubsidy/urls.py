@@ -2,6 +2,7 @@ from django.urls import path
 from .contracts import view as v
 from .contracts.doctrines import DoctrineRequestsAdminView, DoctrineRequestsDetailView, location_search
 from .contracts.admin.settings import SubsidySettingsAdminView
+from .contracts.admin import rule_exceptions as admin_views
 
 app_name = "aasubsidy"
 
@@ -28,5 +29,7 @@ urlpatterns = [
     path("admin/doctrines/", DoctrineRequestsAdminView.as_view(), name="doctrine_admin"),
     path("admin/doctrines/<str:doctrine_name>/", DoctrineRequestsDetailView.as_view(), name="doctrine_detail"),
     path("admin/subsidy-settings/", SubsidySettingsAdminView.as_view(), name="subsidy_settings"),
+    path("admin/rule-exceptions/", admin_views.RuleExceptionsView.as_view(), name="rule_exceptions"),
+    path("admin/rule-exceptions/delete/", admin_views.DeleteRuleView.as_view(), name="delete_rule"),
     path("api/location-search/", location_search, name="location_search"),
 ]

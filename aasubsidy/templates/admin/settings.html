@@ -8,115 +8,290 @@
       <div class="alert {% if message.tags %}alert-{{ message.tags }}{% else %}alert-info{% endif %}">{{ message }}</div>
     {% endfor %}
   {% endif %}
-  <div class="card">
-    <div class="card-header">
-      <h3 class="m-0">{% trans "Subsidy Settings" %}</h3>
+
+  <div class="subsidy-settings-page">
+    <!-- Hero Section -->
+    <div class="settings-hero mb-4">
+      <div>
+        <p class="settings-kicker mb-2">{% trans "Administration" %}</p>
+        <h2 class="settings-title mb-2">{% trans "Subsidy Settings" %}</h2>
+        <p class="settings-subtitle mb-0">
+          {% trans "Configure pricing calculations, doctrine matching thresholds, and contract filtering rules." %}
+        </p>
+      </div>
     </div>
-    <div class="card-body">
-      <form method="post">
-        {% csrf_token %}
-        <div class="row g-3">
-          <div class="col-12 col-md-6">
-            <label class="form-label">{% trans "Price Basis" %}</label>
-            <select name="price_basis" class="form-select themable-select">
-              <option value="sell" {% if cfg.price_basis == 'sell' %}selected{% endif %}>{% trans "Jita Sell" %}</option>
-              <option value="buy" {% if cfg.price_basis == 'buy' %}selected{% endif %}>{% trans "Jita Buy" %}</option>
-            </select>
-          </div>
-          <div class="col-12 col-md-6">
-            <label class="form-label">{% trans "Percentage over Basis" %}</label>
-            <div class="input-group">
-              <input type="number" step="0.0001" min="0" name="pct_over_basis" class="form-control themable-input" value="{{ cfg.pct_over_basis }}">
-              <span class="input-group-text">ratio (e.g. 0.10 = 10%)</span>
-            </div>
-          </div>
-          <div class="col-12 col-md-6">
-            <label class="form-label">{% trans "Cost per m3 (ISK)" %}</label>
-            <input type="number" step="0.01" min="0" name="cost_per_m3" class="form-control themable-input" value="{{ cfg.cost_per_m3 }}">
-          </div>
-          <div class="col-12 col-md-6">
-            <label class="form-label">{% trans "Rounding increment (ISK)" %}</label>
-            <input type="number" step="1" min="1" name="rounding_increment" class="form-control themable-input" value="{{ cfg.rounding_increment }}">
-          </div>
-          <div class="col-12 col-md-6">
-            <label class="form-label">{% trans "Corporation ID" %}</label>
-            <input type="number" step="1" min="1" name="corporation_id" class="form-control themable-input" value="{{ cfg.corporation_id }}">
-            <div class="form-text">{% trans "The ID of the corporation whose contracts should be subsidized." %}</div>
-          </div>
-          <div class="col-12 col-md-6">
-            <div class="form-check mt-4">
-              <input class="form-check-input" type="checkbox" name="ignore_zero_isk_contracts" id="ignoreZeroIskContracts" {% if cfg.ignore_zero_isk_contracts %}checked{% endif %}>
-              <label class="form-check-label" for="ignoreZeroIskContracts">{% trans "Ignore zero-ISK contracts" %}</label>
-            </div>
-            <div class="form-text">{% trans "Contracts priced at 0 ISK will be excluded from subsidy matching and review." %}</div>
-          </div>
-          <div class="col-12">
-            <label class="form-label">{% trans "Ignored Contract Title Patterns" %}</label>
-            <textarea
-              name="ignored_contract_title_patterns"
-              class="form-control themable-input"
-              rows="6"
-              spellcheck="false"
-            >{{ cfg.ignored_contract_title_patterns }}</textarea>
-            <div class="form-text">{% trans "One wildcard pattern per line. Use * as the wildcard. Example: INDY-*" %}</div>
-          </div>
-        </div>
 
-        <hr class="my-4">
-        <h5 class="mb-3">{% trans "Doctrine Matching Settings" %}</h5>
-        <div class="row g-3">
-          <div class="col-12 col-md-6">
-            <label class="form-label">{% trans "Close Match Threshold" %}</label>
-            <div class="input-group">
-              <input type="number" step="0.01" min="0" max="100" name="close_match_threshold" class="form-control themable-input" value="{{ cfg.close_match_threshold }}">
-              <span class="input-group-text">%</span>
-            </div>
-            <div class="form-text">{% trans "Minimum score for a contract to be considered a close match. Below this, contracts are auto-rejected." %}</div>
-          </div>
-          <div class="col-12 col-md-6">
-            <div class="form-check mt-4">
-              <input class="form-check-input" type="checkbox" name="show_close_matches" id="showCloseMatches" {% if cfg.show_close_matches %}checked{% endif %}>
-              <label class="form-check-label" for="showCloseMatches">{% trans "Show close matches on review board" %}</label>
-            </div>
-            <div class="form-text">{% trans "If disabled, only perfect matches and forced doctrines appear on the board." %}</div>
+    <form method="post">
+      {% csrf_token %}
+
+      <!-- Pricing Configuration Panel -->
+      <div class="settings-panel mb-3">
+        <div class="settings-panel-header">
+          <div>
+            <div class="settings-panel-kicker">{% trans "Subsidy Calculation" %}</div>
+            <h3 class="settings-panel-title">{% trans "Pricing Configuration" %}</h3>
           </div>
         </div>
-
-        <div class="alert alert-info mt-4">
-          <h6 class="alert-heading">{% trans "How Doctrine Scoring Works (Item-Count System)" %}</h6>
-          <p class="mb-2"><strong>{% trans "Scoring Method:" %}</strong></p>
-          <ul class="mb-2">
-            <li>{% trans "Each module/item = 1 point" %}</li>
-            <li>{% trans "Each consumable stack (ammo/drones/paste/boosters) = 1 point" %}</li>
-            <li>{% trans "Start with max points (all expected items)" %}</li>
-            <li>{% trans "Subtract penalties for issues" %}</li>
-            <li><strong>{% trans "Formula:" %}</strong> {% trans "(expected_items - penalties) / expected_items × 100" %}</li>
-          </ul>
-          <p class="mb-2"><strong>{% trans "Penalties:" %}</strong></p>
-          <ul class="mb-2">
-            <li><strong>{% trans "Wrong hull:" %}</strong> {% trans "Score forced to 0% (automatic fail)" %}</li>
-            <li><strong>{% trans "Missing required item:" %}</strong> {% trans "-1 point" %}</li>
-            <li><strong>{% trans "Missing optional item:" %}</strong> {% trans "-1 point" %}</li>
-            <li><strong>{% trans "Extra unexpected item:" %}</strong> {% trans "-1 point" %}</li>
-            <li><strong>{% trans "Substitution (any type):" %}</strong> {% trans "-1 point" %}</li>
-            <li><strong>{% trans "Wrong consumable quantity (±20%):" %}</strong> {% trans "-0.5 points" %}</li>
-          </ul>
-          <p class="mb-2"><strong>{% trans "Example:" %}</strong> {% trans "32 expected items, missing 1 drone stack, extra 1 unwanted item = (32-2)/32 = 93.75%" %}</p>
-          <p class="mb-2"><strong>{% trans "Match Categories:" %}</strong></p>
-          <ul class="mb-0">
-            <li><strong>100%:</strong> {% trans "Perfect match - auto-approved if profile allows" %}</li>
-            <li><strong>≥ auto_match_threshold:</strong> {% trans "Auto-match (if profile enabled) - contract automatically accepted" %}</li>
-            <li><strong>≥ review_threshold:</strong> {% trans "Needs review - contract sent to review board for manual decision" %}</li>
-            <li><strong>≥ close_match_threshold:</strong> {% trans "Close match - appears on review board (if enabled)" %}</li>
-            <li><strong>&lt; close_match_threshold:</strong> {% trans "Auto-rejected - contract doesn't appear on review board" %}</li>
-          </ul>
+        <div class="settings-panel-body">
+          <div class="row g-3">
+            <div class="col-12 col-md-6">
+              <label class="form-label">{% trans "Price Basis" %}</label>
+              <select name="price_basis" class="form-select">
+                <option value="sell" {% if cfg.price_basis == 'sell' %}selected{% endif %}>{% trans "Jita Sell" %}</option>
+                <option value="buy" {% if cfg.price_basis == 'buy' %}selected{% endif %}>{% trans "Jita Buy" %}</option>
+              </select>
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label">{% trans "Percentage over Basis" %}</label>
+              <div class="input-group">
+                <input type="number" step="0.0001" min="0" name="pct_over_basis" class="form-control" value="{{ cfg.pct_over_basis }}">
+                <span class="input-group-text">{% trans "ratio (0.10 = 10%)" %}</span>
+              </div>
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label">{% trans "Cost per m³ (ISK)" %}</label>
+              <input type="number" step="0.01" min="0" name="cost_per_m3" class="form-control" value="{{ cfg.cost_per_m3 }}">
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label">{% trans "Rounding Increment (ISK)" %}</label>
+              <input type="number" step="1" min="1" name="rounding_increment" class="form-control" value="{{ cfg.rounding_increment }}">
+            </div>
+          </div>
         </div>
+      </div>
 
-        <div class="mt-3">
-          <button class="btn btn-primary" type="submit">{% trans "Save" %}</button>
+      <!-- Contract Filtering Panel -->
+      <div class="settings-panel mb-3">
+        <div class="settings-panel-header">
+          <div>
+            <div class="settings-panel-kicker">{% trans "Contract Processing" %}</div>
+            <h3 class="settings-panel-title">{% trans "Filtering Rules" %}</h3>
+          </div>
         </div>
-      </form>
-    </div>
+        <div class="settings-panel-body">
+          <div class="row g-3">
+            <div class="col-12 col-md-6">
+              <label class="form-label">{% trans "Corporation ID" %}</label>
+              <input type="number" step="1" min="1" name="corporation_id" class="form-control" value="{{ cfg.corporation_id }}">
+              <div class="form-text">{% trans "The ID of the corporation whose contracts should be subsidized." %}</div>
+            </div>
+            <div class="col-12 col-md-6">
+              <div class="form-check mt-4">
+                <input class="form-check-input" type="checkbox" name="ignore_zero_isk_contracts" id="ignoreZeroIskContracts" {% if cfg.ignore_zero_isk_contracts %}checked{% endif %}>
+                <label class="form-check-label" for="ignoreZeroIskContracts">{% trans "Ignore zero-ISK contracts" %}</label>
+              </div>
+              <div class="form-text">{% trans "Contracts priced at 0 ISK will be excluded from subsidy matching and review." %}</div>
+            </div>
+            <div class="col-12">
+              <label class="form-label">{% trans "Ignored Contract Title Patterns" %}</label>
+              <textarea
+                name="ignored_contract_title_patterns"
+                class="form-control font-monospace"
+                rows="4"
+                spellcheck="false"
+                placeholder="INDY-*&#10;HAULER-*&#10;MARKET-*"
+              >{{ cfg.ignored_contract_title_patterns }}</textarea>
+              <div class="form-text">{% trans "One wildcard pattern per line. Use * as the wildcard. Example: INDY-*" %}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Doctrine Matching Panel -->
+      <div class="settings-panel mb-3">
+        <div class="settings-panel-header">
+          <div>
+            <div class="settings-panel-kicker">{% trans "Automated Matching" %}</div>
+            <h3 class="settings-panel-title">{% trans "Doctrine Matching Settings" %}</h3>
+          </div>
+        </div>
+        <div class="settings-panel-body">
+          <div class="row g-3">
+            <div class="col-12 col-md-6">
+              <label class="form-label">{% trans "Close Match Threshold" %}</label>
+              <div class="input-group">
+                <input type="number" step="0.01" min="0" max="100" name="close_match_threshold" class="form-control" value="{{ cfg.close_match_threshold }}">
+                <span class="input-group-text">%</span>
+              </div>
+              <div class="form-text">{% trans "Minimum score for a contract to be considered a close match. Below this, contracts are auto-rejected." %}</div>
+            </div>
+            <div class="col-12 col-md-6">
+              <div class="form-check mt-4">
+                <input class="form-check-input" type="checkbox" name="show_close_matches" id="showCloseMatches" {% if cfg.show_close_matches %}checked{% endif %}>
+                <label class="form-check-label" for="showCloseMatches">{% trans "Show close matches on review board" %}</label>
+              </div>
+              <div class="form-text">{% trans "If disabled, only perfect matches and forced doctrines appear on the board." %}</div>
+            </div>
+          </div>
+
+          <!-- Scoring Guide -->
+          <div class="scoring-guide-panel mt-4">
+            <h6 class="scoring-guide-title">{% trans "How Doctrine Scoring Works (Item-Count System)" %}</h6>
+
+            <div class="scoring-section">
+              <div class="scoring-section-title">{% trans "Scoring Method" %}</div>
+              <ul class="scoring-list">
+                <li>{% trans "Each module/item = 1 point" %}</li>
+                <li>{% trans "Each consumable stack (ammo/drones/paste/boosters) = 1 point" %}</li>
+                <li>{% trans "Start with max points (all expected items)" %}</li>
+                <li>{% trans "Subtract penalties for issues" %}</li>
+                <li><strong>{% trans "Formula:" %}</strong> {% trans "(expected_items - penalties) / expected_items × 100" %}</li>
+              </ul>
+            </div>
+
+            <div class="scoring-section">
+              <div class="scoring-section-title">{% trans "Penalties" %}</div>
+              <ul class="scoring-list">
+                <li><strong>{% trans "Wrong hull:" %}</strong> {% trans "Score forced to 0% (automatic fail)" %}</li>
+                <li><strong>{% trans "Missing required item:" %}</strong> {% trans "-1 point" %}</li>
+                <li><strong>{% trans "Missing optional item:" %}</strong> {% trans "-1 point" %}</li>
+                <li><strong>{% trans "Extra unexpected item:" %}</strong> {% trans "-1 point" %}</li>
+                <li><strong>{% trans "Substitution (any type):" %}</strong> {% trans "-1 point" %}</li>
+                <li><strong>{% trans "Wrong consumable quantity (±20%):" %}</strong> {% trans "-0.5 points" %}</li>
+              </ul>
+            </div>
+
+            <div class="scoring-example">
+              <strong>{% trans "Example:" %}</strong> {% trans "32 expected items, missing 1 drone stack, extra 1 unwanted item = (32-2)/32 = 93.75%" %}
+            </div>
+
+            <div class="scoring-section">
+              <div class="scoring-section-title">{% trans "Match Categories" %}</div>
+              <ul class="scoring-list">
+                <li><strong>100%:</strong> {% trans "Perfect match - auto-approved if profile allows" %}</li>
+                <li><strong>≥ auto_match_threshold:</strong> {% trans "Auto-match (if profile enabled) - contract automatically accepted" %}</li>
+                <li><strong>≥ review_threshold:</strong> {% trans "Needs review - contract sent to review board for manual decision" %}</li>
+                <li><strong>≥ close_match_threshold:</strong> {% trans "Close match - appears on review board (if enabled)" %}</li>
+                <li><strong>&lt; close_match_threshold:</strong> {% trans "Auto-rejected - contract doesn't appear on review board" %}</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Save Button -->
+      <div class="d-flex justify-content-end">
+        <button class="btn btn-primary btn-lg" type="submit">
+          <i class="fas fa-save me-2"></i>{% trans "Save Settings" %}
+        </button>
+      </div>
+    </form>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.subsidy-settings-page {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.settings-hero {
+  padding-bottom: 1rem;
+}
+
+.settings-kicker,
+.settings-panel-kicker {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color);
+}
+
+.settings-title {
+  font-size: clamp(1.8rem, 3vw, 2.4rem);
+  font-weight: 700;
+  color: inherit;
+}
+
+.settings-subtitle {
+  max-width: 52rem;
+  color: var(--bs-secondary-color);
+}
+
+.settings-panel {
+  border: 1px solid var(--bs-border-color);
+  border-radius: 1rem;
+  background: rgba(var(--bs-body-color-rgb), 0.02);
+  overflow: hidden;
+}
+
+.settings-panel-header {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--bs-border-color);
+  background: rgba(var(--bs-body-color-rgb), 0.04);
+}
+
+.settings-panel-title {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: inherit;
+}
+
+.settings-panel-body {
+  padding: 1.5rem;
+}
+
+.scoring-guide-panel {
+  padding: 1.25rem;
+  border-radius: 0.85rem;
+  background: rgba(var(--bs-info-rgb), 0.08);
+  border: 1px solid rgba(var(--bs-info-rgb), 0.2);
+}
+
+.scoring-guide-title {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  color: inherit;
+}
+
+.scoring-section {
+  margin-top: 1rem;
+}
+
+.scoring-section-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color);
+  margin-bottom: 0.5rem;
+}
+
+.scoring-list {
+  margin-bottom: 0.75rem;
+  padding-left: 1.5rem;
+}
+
+.scoring-list li {
+  margin-bottom: 0.35rem;
+  color: inherit;
+}
+
+.scoring-example {
+  padding: 0.85rem 1rem;
+  margin-top: 1rem;
+  border-radius: 0.65rem;
+  background: rgba(var(--bs-body-color-rgb), 0.05);
+  border-left: 3px solid var(--bs-info);
+}
+
+@media (max-width: 767.98px) {
+  .settings-hero {
+    padding-bottom: 0.5rem;
+  }
+
+  .settings-panel-header {
+    padding: 1rem 1.25rem;
+  }
+
+  .settings-panel-body {
+    padding: 1.25rem;
+  }
+}
+</style>
 {% endblock %}

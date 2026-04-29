@@ -1,0 +1,369 @@
+{% extends 'contracts/base.html' %}
+{% load i18n %}
+
+{% block details %}
+<div class="container-xxl py-3">
+  {% if messages %}
+    {% for message in messages %}
+      <div class="alert {% if message.tags %}alert-{{ message.tags }}{% else %}alert-info{% endif %}">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+
+  <div class="rule-exceptions-page">
+    <!-- Hero Section -->
+    <div class="exceptions-hero mb-4">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
+        <div>
+          <p class="exceptions-kicker mb-2">{% trans "Administration" %}</p>
+          <h2 class="exceptions-title mb-2">{% trans "Rule Exceptions" %}</h2>
+          <p class="exceptions-subtitle mb-0">
+            {% trans "Manage manually created rules for optional items, substitutions, and quantity tolerances." %}
+          </p>
+        </div>
+        <a href="{% url 'aasubsidy:doctrine_admin' %}" class="btn btn-outline-secondary align-self-center">
+          <i class="fas fa-arrow-left me-2"></i>{% trans "Back to Doctrines" %}
+        </a>
+      </div>
+    </div>
+
+    {% if not fittings_with_rules %}
+    <div class="alert alert-info">
+      <h5 class="alert-heading">{% trans "No Rule Exceptions" %}</h5>
+      <p class="mb-0">{% trans "You haven't created any rule exceptions yet. Rules are created when you click 'Allow Missing', 'Allow Substitution', etc. on the contract review board." %}</p>
+    </div>
+    {% else %}
+      {% for fitting_id, data in fittings_with_rules.items %}
+      <div class="exceptions-panel mb-3">
+        <div class="exceptions-panel-header">
+          <div>
+            <div class="exceptions-panel-kicker">{% trans "Doctrine Fit" %}</div>
+            <h3 class="exceptions-panel-title">{{ data.fitting.name }}</h3>
+          </div>
+          <div class="rule-count-badges">
+            {% if data.item_rules %}
+            <span class="badge bg-primary">{{ data.item_rules|length }} {% trans "Item Rule" %}{{ data.item_rules|length|pluralize }}</span>
+            {% endif %}
+            {% if data.substitution_rules %}
+            <span class="badge bg-info">{{ data.substitution_rules|length }} {% trans "Substitution" %}{{ data.substitution_rules|length|pluralize }}</span>
+            {% endif %}
+            {% if data.quantity_tolerances %}
+            <span class="badge bg-warning text-dark">{{ data.quantity_tolerances|length }} {% trans "Quantity Tolerance" %}{{ data.quantity_tolerances|length|pluralize }}</span>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="exceptions-panel-body">
+          {% if data.item_rules %}
+          <div class="rule-section mb-4">
+            <h6 class="rule-section-title">{% trans "Item Rules" %}</h6>
+            <div class="rule-list">
+              {% for rule in data.item_rules %}
+              <div class="rule-item">
+                <div class="rule-item-content">
+                  <div class="rule-item-icon">
+                    <i class="fas {% if rule.rule_kind == 'optional' %}fa-circle-question{% else %}fa-eye-slash{% endif %} text-primary"></i>
+                  </div>
+                  <div class="rule-item-details">
+                    <div class="rule-item-name">{{ rule.type.name }}</div>
+                    <div class="rule-item-meta">
+                      <span class="rule-badge rule-badge-{{ rule.rule_kind }}">{{ rule.get_rule_kind_display }}</span>
+                      {% if rule.category %}
+                      <span class="text-muted">• {{ rule.category }}</span>
+                      {% endif %}
+                    </div>
+                  </div>
+                </div>
+                <form method="post" action="{% url 'aasubsidy:delete_rule' %}" onsubmit="return confirm('{% trans 'Delete this rule?' %}')">
+                  {% csrf_token %}
+                  <input type="hidden" name="rule_type" value="item">
+                  <input type="hidden" name="rule_id" value="{{ rule.id }}">
+                  <button type="submit" class="btn btn-sm btn-outline-danger">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </form>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {% if data.substitution_rules %}
+          <div class="rule-section mb-4">
+            <h6 class="rule-section-title">{% trans "Substitution Rules" %}</h6>
+            <div class="rule-list">
+              {% for rule in data.substitution_rules %}
+              <div class="rule-item">
+                <div class="rule-item-content">
+                  <div class="rule-item-icon">
+                    <i class="fas fa-exchange-alt text-info"></i>
+                  </div>
+                  <div class="rule-item-details">
+                    <div class="rule-item-name">
+                      {{ rule.expected_type.name }}
+                      <i class="fas fa-arrow-right mx-2 text-muted"></i>
+                      {% if rule.allowed_type %}
+                        {{ rule.allowed_type.name }}
+                      {% else %}
+                        <span class="text-muted fst-italic">{% trans "Profile Variants" %}</span>
+                      {% endif %}
+                    </div>
+                    <div class="rule-item-meta">
+                      <span class="rule-badge rule-badge-substitution">{{ rule.get_rule_type_display }}</span>
+                      <span class="text-muted">• Penalty: {{ rule.penalty_points }} pts</span>
+                    </div>
+                  </div>
+                </div>
+                <form method="post" action="{% url 'aasubsidy:delete_rule' %}" onsubmit="return confirm('{% trans 'Delete this rule?' %}')">
+                  {% csrf_token %}
+                  <input type="hidden" name="rule_type" value="substitution">
+                  <input type="hidden" name="rule_id" value="{{ rule.id }}">
+                  <button type="submit" class="btn btn-sm btn-outline-danger">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </form>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {% if data.quantity_tolerances %}
+          <div class="rule-section">
+            <h6 class="rule-section-title">{% trans "Quantity Tolerances" %}</h6>
+            <div class="rule-list">
+              {% for tolerance in data.quantity_tolerances %}
+              <div class="rule-item">
+                <div class="rule-item-content">
+                  <div class="rule-item-icon">
+                    <i class="fas fa-balance-scale text-warning"></i>
+                  </div>
+                  <div class="rule-item-details">
+                    <div class="rule-item-name">{{ tolerance.type.name }}</div>
+                    <div class="rule-item-meta">
+                      <span class="rule-badge rule-badge-quantity">{{ tolerance.get_mode_display }}</span>
+                      <span class="text-muted">• Range: {{ tolerance.lower_bound }} to {{ tolerance.upper_bound }}</span>
+                      <span class="text-muted">• Penalty: {{ tolerance.penalty_points }} pts</span>
+                    </div>
+                  </div>
+                </div>
+                <form method="post" action="{% url 'aasubsidy:delete_rule' %}" onsubmit="return confirm('{% trans 'Delete this rule?' %}')">
+                  {% csrf_token %}
+                  <input type="hidden" name="rule_type" value="quantity">
+                  <input type="hidden" name="rule_id" value="{{ tolerance.id }}">
+                  <button type="submit" class="btn btn-sm btn-outline-danger">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </form>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.rule-exceptions-page {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.exceptions-hero {
+  padding-bottom: 1rem;
+}
+
+.exceptions-kicker,
+.exceptions-panel-kicker {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color);
+}
+
+.exceptions-title {
+  font-size: clamp(1.8rem, 3vw, 2.4rem);
+  font-weight: 700;
+  color: inherit;
+}
+
+.exceptions-subtitle {
+  max-width: 52rem;
+  color: var(--bs-secondary-color);
+}
+
+.exceptions-panel {
+  border: 1px solid var(--bs-border-color);
+  border-radius: 1rem;
+  background: rgba(var(--bs-body-color-rgb), 0.02);
+  overflow: hidden;
+}
+
+.exceptions-panel-header {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--bs-border-color);
+  background: rgba(var(--bs-body-color-rgb), 0.04);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.exceptions-panel-title {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: inherit;
+}
+
+.exceptions-panel-body {
+  padding: 1.5rem;
+}
+
+.rule-count-badges {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.rule-section {
+  margin-bottom: 1.5rem;
+}
+
+.rule-section:last-child {
+  margin-bottom: 0;
+}
+
+.rule-section-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color);
+  margin-bottom: 0.75rem;
+}
+
+.rule-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.rule-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.95rem 1.1rem;
+  border-radius: 0.85rem;
+  background: rgba(var(--bs-body-color-rgb), 0.04);
+  border: 1px solid var(--bs-border-color);
+  transition: all 0.2s ease;
+}
+
+.rule-item:hover {
+  background: rgba(var(--bs-body-color-rgb), 0.06);
+  border-color: var(--bs-border-color-translucent);
+}
+
+.rule-item-content {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.rule-item-icon {
+  font-size: 1.3rem;
+  width: 2rem;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.rule-item-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.rule-item-name {
+  font-weight: 600;
+  color: inherit;
+  margin-bottom: 0.25rem;
+  word-break: break-word;
+}
+
+.rule-item-meta {
+  font-size: 0.85rem;
+  color: var(--bs-secondary-color);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.rule-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.rule-badge-optional {
+  background: rgba(var(--bs-primary-rgb), 0.15);
+  color: var(--bs-primary);
+}
+
+.rule-badge-ignore {
+  background: rgba(var(--bs-secondary-rgb), 0.15);
+  color: var(--bs-secondary);
+}
+
+.rule-badge-substitution {
+  background: rgba(var(--bs-info-rgb), 0.15);
+  color: var(--bs-info);
+}
+
+.rule-badge-quantity {
+  background: rgba(var(--bs-warning-rgb), 0.15);
+  color: var(--bs-warning);
+}
+
+@media (max-width: 767.98px) {
+  .exceptions-hero {
+    padding-bottom: 0.5rem;
+  }
+
+  .exceptions-panel-header {
+    padding: 1rem 1.25rem;
+  }
+
+  .exceptions-panel-body {
+    padding: 1.25rem;
+  }
+
+  .rule-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .rule-item form {
+    width: 100%;
+  }
+
+  .rule-item form button {
+    width: 100%;
+  }
+}
+</style>
+{% endblock %}
