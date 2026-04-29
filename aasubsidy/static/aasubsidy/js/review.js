@@ -131,7 +131,25 @@
       const selectedCandidate = selectedFitId
         ? candidates.find(candidate => candidate && String(candidate.fit_id) === selectedFitId)
         : null;
-      const selectedName = analysis.selected_fit_name || selectedCandidate?.fit_name || 'No Match';
+      let selectedName = analysis.selected_fit_name || selectedCandidate?.fit_name || '';
+      const hasSelectedFit = Boolean(selectedFitId);
+      const existingDoctrineText = row
+        .cells[getColumnIndex('doctrine')]
+        ?.querySelector('.doctrine-display')
+        ?.textContent
+        ?.trim() || '';
+      const existingLooksMatched = existingDoctrineText && existingDoctrineText !== 'No Match';
+      if ((!selectedName || selectedName === 'No Match') && hasSelectedFit && selectedCandidate?.fit_name) {
+        selectedName = selectedCandidate.fit_name;
+      }
+      if ((!selectedName || selectedName === 'No Match') && existingLooksMatched && hasSelectedFit) {
+        selectedName = existingDoctrineText
+          .replace(/^Ambiguous:\s*/i, '')
+          .replace(/^Needs review:\s*/i, '')
+          .replace(/^Close match to\s*/i, '')
+          .trim();
+      }
+      selectedName = selectedName || 'No Match';
       const score = Number(analysis.score || 0);
       const threshold = Number(window.AASubsidyConfig.closeMatchThreshold || 70.0);
       const warnings = Array.isArray(analysis.warnings) ? analysis.warnings : [];
@@ -887,13 +905,6 @@
       });
     }
 
-    // ENABLED: AJAX refresh fills in matches missing from initial fast DB-only load
-    refreshRowSummariesOnLoad()
-      .catch((err) => {
-        console.error('Initial review summary refresh failed:', err);
-      })
-      .finally(() => {
-        hideLoading();
-      });
+    hideLoading();
   });
 })();

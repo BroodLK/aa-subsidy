@@ -234,7 +234,14 @@ def _serialize_review_row(contract: CorporateContract, result, pricing_fallback:
         "candidates": [],
         "pricing": pricing,
     }
-    if pricing_fit_id and pricing_fallback and not payload.get("selected_fit_name"):
+    if (
+        pricing_fit_id
+        and pricing_fallback
+        and (
+            not payload.get("selected_fit_name")
+            or payload.get("selected_fit_name") == "No Match"
+        )
+    ):
         fit_info = pricing_fallback.get(int(pricing_fit_id))
         if fit_info and fit_info.get("name"):
             payload["selected_fit_id"] = int(pricing_fit_id)
