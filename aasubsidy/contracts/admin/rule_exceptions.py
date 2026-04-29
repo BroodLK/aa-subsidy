@@ -24,13 +24,13 @@ class RuleExceptionsView(PermissionRequiredMixin, TemplateView):
         fittings_with_rules = {}
 
         # Collect item rules (optional, ignored)
-        for rule in DoctrineItemRule.objects.select_related('fitting', 'type').filter(
+        for rule in DoctrineItemRule.objects.select_related('profile__fitting', 'eve_type').filter(
             rule_kind__in=['optional', 'ignore']
-        ).order_by('fitting__name', 'type__name'):
-            fitting_id = rule.fitting_id
+        ).order_by('profile__fitting__name', 'eve_type__name'):
+            fitting_id = rule.profile.fitting_id
             if fitting_id not in fittings_with_rules:
                 fittings_with_rules[fitting_id] = {
-                    'fitting': rule.fitting,
+                    'fitting': rule.profile.fitting,
                     'item_rules': [],
                     'substitution_rules': [],
                     'quantity_tolerances': [],
@@ -39,12 +39,12 @@ class RuleExceptionsView(PermissionRequiredMixin, TemplateView):
 
         # Collect substitution rules
         for rule in DoctrineSubstitutionRule.objects.select_related(
-            'fitting', 'expected_type', 'allowed_type'
-        ).order_by('fitting__name', 'expected_type__name'):
-            fitting_id = rule.fitting_id
+            'profile__fitting', 'expected_type', 'allowed_type'
+        ).order_by('profile__fitting__name', 'expected_type__name'):
+            fitting_id = rule.profile.fitting_id
             if fitting_id not in fittings_with_rules:
                 fittings_with_rules[fitting_id] = {
-                    'fitting': rule.fitting,
+                    'fitting': rule.profile.fitting,
                     'item_rules': [],
                     'substitution_rules': [],
                     'quantity_tolerances': [],
@@ -53,12 +53,12 @@ class RuleExceptionsView(PermissionRequiredMixin, TemplateView):
 
         # Collect quantity tolerances
         for tolerance in DoctrineQuantityTolerance.objects.select_related(
-            'fitting', 'type'
-        ).order_by('fitting__name', 'type__name'):
-            fitting_id = tolerance.fitting_id
+            'profile__fitting', 'eve_type'
+        ).order_by('profile__fitting__name', 'eve_type__name'):
+            fitting_id = tolerance.profile.fitting_id
             if fitting_id not in fittings_with_rules:
                 fittings_with_rules[fitting_id] = {
-                    'fitting': tolerance.fitting,
+                    'fitting': tolerance.profile.fitting,
                     'item_rules': [],
                     'substitution_rules': [],
                     'quantity_tolerances': [],
@@ -92,16 +92,16 @@ class DeleteRuleView(PermissionRequiredMixin, View):
             rule_id = int(rule_id)
 
             if rule_type == 'item':
-                rule = DoctrineItemRule.objects.get(pk=rule_id)
-                rule_desc = f"{rule.type.name} ({rule.get_rule_kind_display()})"
+                rule = DoctrineItemRule.objects.select_related('eve_type').get(pk=rule_id)
+                rule_desc = f"{rule.eve_type.name} ({rule.get_rule_kind_display()})"
                 rule.delete()
             elif rule_type == 'substitution':
-                rule = DoctrineSubstitutionRule.objects.get(pk=rule_id)
+                rule = DoctrineSubstitutionRule.objects.select_related('expected_type', 'allowed_type').get(pk=rule_id)
                 rule_desc = f"{rule.expected_type.name} → {rule.allowed_type.name if rule.allowed_type else 'profile variants'}"
                 rule.delete()
             elif rule_type == 'quantity':
-                tolerance = DoctrineQuantityTolerance.objects.get(pk=rule_id)
-                rule_desc = f"{tolerance.type.name} quantity tolerance"
+                tolerance = DoctrineQuantityTolerance.objects.select_related('eve_type').get(pk=rule_id)
+                rule_desc = f"{tolerance.eve_type.name} quantity tolerance"
                 tolerance.delete()
             else:
                 messages.error(request, "Unknown rule type.")
