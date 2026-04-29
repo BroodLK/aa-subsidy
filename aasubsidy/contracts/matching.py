@@ -664,7 +664,13 @@ def evaluate_contract_against_definition(
                 )
             )
 
-    score = max(score, ZERO).quantize(Decimal("0.01"))
+    # Force score to 0 if hull doesn't match
+    has_wrong_hull = any(failure.get("code") == "wrong_hull" for failure in hard_failures)
+    if has_wrong_hull:
+        score = ZERO
+    else:
+        score = max(score, ZERO).quantize(Decimal("0.01"))
+
     source_hint = "auto"
     if used_learned_rule or not exact_match:
         source_hint = "learned_rule"

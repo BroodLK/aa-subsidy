@@ -25,6 +25,8 @@ class SubsidySettingsAdminView(PermissionRequiredMixin, View):
         corp_id_raw = request.POST.get("corporation_id") or "1"
         ignore_zero_isk_contracts = request.POST.get("ignore_zero_isk_contracts") == "on"
         ignored_contract_title_patterns = (request.POST.get("ignored_contract_title_patterns") or "").strip()
+        close_match_threshold_raw = request.POST.get("close_match_threshold") or "70.00"
+        show_close_matches = request.POST.get("show_close_matches") == "on"
         try:
             cfg.price_basis = "buy" if basis == "buy" else "sell"
             cfg.pct_over_basis = Decimal(pct_raw)
@@ -33,6 +35,8 @@ class SubsidySettingsAdminView(PermissionRequiredMixin, View):
             cfg.corporation_id = int(corp_id_raw)
             cfg.ignore_zero_isk_contracts = ignore_zero_isk_contracts
             cfg.ignored_contract_title_patterns = ignored_contract_title_patterns
+            cfg.close_match_threshold = Decimal(close_match_threshold_raw)
+            cfg.show_close_matches = show_close_matches
             cfg.save(
                 update_fields=[
                     "price_basis",
@@ -42,6 +46,8 @@ class SubsidySettingsAdminView(PermissionRequiredMixin, View):
                     "corporation_id",
                     "ignore_zero_isk_contracts",
                     "ignored_contract_title_patterns",
+                    "close_match_threshold",
+                    "show_close_matches",
                 ]
             )
             messages.success(request, "Subsidy settings saved.")

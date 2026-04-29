@@ -315,22 +315,22 @@
             };
 
             const renderStatus = (item) => {
-                if (item.is_missing) return '<span class="badge bg-danger">Missing</span>';
-                if (item.status === 'error') return '<span class="badge bg-danger">Wrong</span>';
-                if (item.status === 'warning') return '<span class="badge bg-warning text-dark">Check</span>';
-                return '<span class="badge bg-success">OK</span>';
+                if (item.is_missing) return '<span class="badge bg-danger"><i class="fas fa-times-circle me-1"></i>Missing</span>';
+                if (item.status === 'error') return '<span class="badge bg-danger"><i class="fas fa-exclamation-triangle me-1"></i>Error</span>';
+                if (item.status === 'warning') return '<span class="badge bg-warning text-dark"><i class="fas fa-exclamation-circle me-1"></i>Warning</span>';
+                return '<span class="badge bg-success"><i class="fas fa-check-circle me-1"></i>OK</span>';
             };
 
             const renderActions = (item) => {
                 const actions = Array.isArray(item.actions) ? item.actions : [];
-                if (!actions.length || !analysis || !analysis.selected_fit_id) return '&mdash;';
+                if (!actions.length || !analysis || !analysis.selected_fit_id) return '<span class="text-muted fst-italic">No actions</span>';
                 const labels = {
                     optional_item: window.AASubsidyConfig.lang.allowMissing,
                     quantity_tolerance: window.AASubsidyConfig.lang.allowQuantity,
                     specific_substitute: window.AASubsidyConfig.lang.allowSubstitute,
                     ignore_extra_item: window.AASubsidyConfig.lang.ignoreExtra,
                 };
-                return actions.map(action => {
+                return '<div class="d-flex gap-1 flex-wrap">' + actions.map(action => {
                     const params = new URLSearchParams({
                         fit_id: String(analysis.selected_fit_id || ''),
                         action_name: action,
@@ -340,24 +340,25 @@
                         actual_qty: item.qty || '',
                         category: item.category || '',
                     });
-                    return `<button type="button" class="btn btn-sm btn-outline-light create-rule-btn" data-contract="${id}" data-payload="${encodeURIComponent(params.toString())}">${labels[action] || action}</button>`;
-                }).join(' ');
+                    return `<button type="button" class="btn btn-sm btn-outline-primary create-rule-btn" data-contract="${id}" data-payload="${encodeURIComponent(params.toString())}">${labels[action] || action}</button>`;
+                }).join('') + '</div>';
             };
 
-            let html = '<table class="table table-sm table-dark mb-0 font-monospace" style="font-size: 0.8rem;">';
+            let html = '<table class="table table-sm table-hover mb-0" style="font-size: 0.875rem;">';
             html = summaryHtml + html;
             html += showValidation
-                ? '<thead><tr><th>Type</th><th class="text-end">Qty</th><th class="text-center">Included</th><th class="text-center">Check</th><th>Why</th><th>Action</th></tr></thead><tbody>'
-                : '<thead><tr><th>Type</th><th class="text-end">Qty</th><th class="text-center">Included</th></tr></thead><tbody>';
+                ? '<thead class="table-dark"><tr><th style="width: 25%;">Item</th><th class="text-end" style="width: 8%;">Qty</th><th class="text-center" style="width: 8%;">In/Ex</th><th class="text-center" style="width: 10%;">Status</th><th style="width: 24%;">Details</th><th style="width: 25%;">Actions</th></tr></thead><tbody>'
+                : '<thead class="table-dark"><tr><th>Type</th><th class="text-end">Qty</th><th class="text-center">Included</th></tr></thead><tbody>';
             data.items.forEach(item => {
+                const rowClass = item.status === 'error' ? 'table-danger' : item.status === 'warning' ? 'table-warning' : '';
                 html += showValidation
-                    ? `<tr>
-                        <td>${item.name}</td>
-                        <td class="text-end">${item.qty.toLocaleString()}</td>
+                    ? `<tr class="${rowClass}">
+                        <td class="fw-semibold">${item.name}</td>
+                        <td class="text-end font-monospace">${item.qty.toLocaleString()}</td>
                         <td class="text-center">${renderIncluded(item)}</td>
                         <td class="text-center">${renderStatus(item)}</td>
-                        <td class="text-wrap">${item.reason || '&mdash;'}</td>
-                        <td class="text-wrap">${renderActions(item)}</td>
+                        <td><small class="text-muted">${item.reason || '<span class="fst-italic">No issues</span>'}</small></td>
+                        <td>${renderActions(item)}</td>
                     </tr>`
                     : `<tr>
                         <td>${item.name}</td>

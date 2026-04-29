@@ -406,6 +406,16 @@ class SubsidyConfig(models.Model):
         default="INDY-*",
         help_text="One wildcard pattern per line. Use * to match any sequence.",
     )
+    close_match_threshold = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=70.00,
+        help_text="Minimum score (0-100) for a contract to be considered a 'close match' and require review. Below this score, contracts will be rejected automatically.",
+    )
+    show_close_matches = models.BooleanField(
+        default=True,
+        help_text="If enabled, close matches (below auto-accept but above threshold) will appear on the review board. If disabled, only perfect matches and forced doctrines will be shown.",
+    )
 
     class Meta:
         verbose_name = "Subsidy Configuration"
