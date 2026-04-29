@@ -287,6 +287,11 @@
                     .join(', ');
                 const failureSummary = renderIssueSummary(analysis.hard_failures, 'Rejected Because', 'text-danger');
                 const warningSummary = renderIssueSummary(analysis.warnings, 'Warnings', 'text-warning');
+                const scoringDetails = analysis.scoring_details || {};
+                const pointsEarned = scoringDetails.points_earned !== undefined ? scoringDetails.points_earned.toFixed(1) : '';
+                const expectedItems = scoringDetails.expected_items || '';
+                const scoreBreakdown = pointsEarned && expectedItems ? ` (${pointsEarned}/${expectedItems})` : '';
+
                 summaryHtml = `
                     <div class="px-3 py-2 small border-bottom border-secondary">
                         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
@@ -294,7 +299,7 @@
                                 <span class="fw-semibold">${analysis.selected_fit_name || 'No doctrine selected'}</span>
                                 <span class="ms-2 badge text-bg-secondary">${sourceLabel}</span>
                                 <span class="ms-2 ${statusClass}">${statusLabel}</span>
-                                <span class="ms-2">Score ${Number(analysis.score || 0).toFixed(2)}</span>
+                                <span class="ms-2">Score: ${Number(analysis.score || 0).toFixed(2)}%${scoreBreakdown}</span>
                             </div>
                             <div class="d-flex gap-2">
                                 ${analysis.can_accept_once ? `<button type="button" class="btn btn-sm btn-outline-success accept-once-btn" data-contract="${id}" data-fit="${analysis.selected_fit_id || ''}">${window.AASubsidyConfig.lang.acceptOnce}</button>` : ''}

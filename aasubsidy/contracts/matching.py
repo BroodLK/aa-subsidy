@@ -278,7 +278,409 @@ def _match_tolerance(
     return best
 
 
+# Cache for market group ancestry checks
+_CONSUMABLE_MARKET_GROUPS_CACHE: dict[int, bool] = {}
+_CONSUMABLE_ROOT_GROUPS = {11, 157}  # Charges & Components (11), Drones (157)
+
+
+def _is_consumable_market_group(market_group_id: int | None) -> bool:
+    """
+    Check if a market group ID is a consumable (ammo, drones, paste, boosters, scripts, etc.)
+    by checking if it's market group 11, 157, or a descendant of those groups.
+    Uses django-eveonline-sde's ItemMarketGroup model to traverse the hierarchy.
+    """
+    if market_group_id is None:
+        return False
+
+    if market_group_id in _CONSUMABLE_MARKET_GROUPS_CACHE:
+        return _CONSUMABLE_MARKET_GROUPS_CACHE[market_group_id]
+
+    # Check if it's one of the root groups
+    if market_group_id in _CONSUMABLE_ROOT_GROUPS:
+        _CONSUMABLE_MARKET_GROUPS_CACHE[market_group_id] = True
+        return True
+
+    # Traverse up the market group hierarchy using eve_sde
+    try:
+        from eve_sde.models import ItemMarketGroup
+
+        current_id = market_group_id
+        visited = set()
+        max_depth = 20  # Prevent infinite loops
+        depth = 0
+
+        while current_id and depth < max_depth:
+            if current_id in visited:
+                break  # Circular reference protection
+            visited.add(current_id)
+
+            if current_id in _CONSUMABLE_ROOT_GROUPS:
+                _CONSUMABLE_MARKET_GROUPS_CACHE[market_group_id] = True
+                return True
+
+            # Get parent market group
+            try:
+                market_group = ItemMarketGroup.objects.only('parent_group_id').get(pk=current_id)
+                current_id = market_group.parent_group_id if hasattr(market_group, 'parent_group_id') else None
+            except ItemMarketGroup.DoesNotExist:
+                break
+
+            depth += 1
+
+        _CONSUMABLE_MARKET_GROUPS_CACHE[market_group_id] = False
+        return False
+    except Exception:
+        # If we can't query the database, assume it's not a consumable
+        return False
+
+
 def evaluate_contract_against_definition(
+    contract_items: dict[int, ContractItemData],
+    fitting: FittingDefinition,
+) -> CandidateMatch:
+    """
+    NEW ITEM-COUNT BASED SCORING SYSTEM
+
+    Scoring logic:
+    - Start with expected_items points (max score)
+    - Hull mismatch = automatic 0%
+    - Modules/fits count as 1 point each
+    - Consumables (ammo/drones/paste/boosters via market groups 11/157) count as 1 stack each
+    - Missing required module/consumable: -1 point
+    - Extra unexpected module/consumable: -1 point
+    - Wrong consumable quantity (±20%): -0.5 points
+    - Substitution: -1 point
+    - Final score = (expected_items - penalty_points) / expected_items × 100
+    """
+    remaining = Counter({
+        type_id: int(item.included_qty)
+        for type_id, item in contract_items.items()
+        if int(item.included_qty or 0) > 0
+    })
+
+    hard_failures: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    item_rows: list[dict[str, Any]] = []
+    exact_match = True
+    used_learned_rule = False
+
+    # Track points for item-count scoring (START WITH MAX POINTS, SUBTRACT PENALTIES)
+    expected_items = 0  # Total items we expect (max possible points)
+    penalty_points = Decimal("0.00")  # Total penalties to subtract
+
+    substitution_rules_by_expected: dict[int, list[SubstitutionRuleData]] = defaultdict(list)
+    for substitution in fitting.substitutions:
+        substitution_rules_by_expected[substitution.expected_type_id].append(substitution)
+
+    # Process each expected item in the fitting
+    for rule in sorted(fitting.item_rules, key=lambda entry: (entry.sort_order, entry.expected_type_name.lower())):
+        expected_type = fitting.type_info.get(
+            rule.expected_type_id,
+            TypeInfo(type_id=rule.expected_type_id, name=rule.expected_type_name),
+        )
+        contract_item = contract_items.get(rule.expected_type_id)
+        included_qty = int(contract_item.included_qty) if contract_item else 0
+        excluded_qty = int(contract_item.excluded_qty) if contract_item else 0
+        exact_qty = int(remaining.get(rule.expected_type_id, 0))
+
+        # Check if this is a consumable
+        is_consumable = _is_consumable_market_group(expected_type.market_group_id)
+
+        # Ignore rules don't count toward scoring
+        if rule.rule_kind == "ignore":
+            if exact_qty > 0:
+                remaining[rule.expected_type_id] -= exact_qty
+                if remaining[rule.expected_type_id] <= 0:
+                    remaining.pop(rule.expected_type_id, None)
+                used_learned_rule = True
+                item_rows.append(_row(
+                    expected_type_id=rule.expected_type_id,
+                    expected_name=expected_type.name,
+                    actual_qty=exact_qty,
+                    included_qty=included_qty,
+                    excluded_qty=excluded_qty,
+                    expected_qty=rule.expected_quantity,
+                    reason="Ignored by doctrine policy.",
+                    category=rule.category,
+                ))
+            continue
+
+        # Count this item in our expected total (modules and consumable stacks both = 1 point)
+        expected_items += 1
+
+        preferred_qty = _preferred_quantity(rule)
+        minimum_qty = _min_required(rule)
+
+        # Try to find substitutes if needed
+        applied_substitutions: list[dict[str, Any]] = []
+        substitute_qty = 0
+        shortage_target = max(preferred_qty - exact_qty, 0) if preferred_qty > 0 else 0
+
+        if shortage_target > 0:
+            explicit_rules = sorted(
+                substitution_rules_by_expected.get(rule.expected_type_id, []),
+                key=lambda entry: (entry.penalty_points, entry.rule_type, entry.allowed_type_id or 0),
+            )
+            candidate_actual_ids = [
+                type_id for type_id, qty in remaining.items()
+                if qty > 0 and type_id != rule.expected_type_id
+            ]
+            for actual_type_id in candidate_actual_ids:
+                if substitute_qty >= shortage_target:
+                    break
+                actual_info = fitting.type_info.get(actual_type_id, TypeInfo(type_id=actual_type_id, name=str(actual_type_id)))
+                matched_rule = next((
+                    sub_rule for sub_rule in explicit_rules
+                    if _substitution_matches(sub_rule, expected=expected_type, actual=actual_info)
+                ), None)
+                implicit_penalty = _implicit_substitution_penalty(fitting.profile, expected=expected_type, actual=actual_info)
+
+                if matched_rule is None and implicit_penalty is None:
+                    continue
+
+                available = int(remaining.get(actual_type_id, 0))
+                use_qty = min(available, shortage_target - substitute_qty)
+                if use_qty <= 0:
+                    continue
+
+                remaining[actual_type_id] -= use_qty
+                if remaining[actual_type_id] <= 0:
+                    remaining.pop(actual_type_id, None)
+                substitute_qty += use_qty
+
+                # Substitutions now cost -1 point
+                penalty_points += Decimal("1.00")
+                exact_match = False
+                used_learned_rule = True
+
+                applied_substitutions.append({
+                    "type_id": actual_info.type_id,
+                    "name": actual_info.name,
+                    "qty": use_qty,
+                    "penalty_points": 1.0,
+                    "rule_type": matched_rule.rule_type if matched_rule else "profile_variant",
+                })
+                warnings.append(_issue(
+                    "warning",
+                    "substitution",
+                    f"{expected_type.name} matched with {actual_info.name}.",
+                    expected_type_id=expected_type.type_id,
+                    actual_type_id=actual_info.type_id,
+                    quantity=use_qty,
+                    fitting_id=fitting.fitting_id,
+                ))
+
+        actual_qty = exact_qty + substitute_qty
+        if exact_qty > 0:
+            remaining[rule.expected_type_id] -= exact_qty
+            if remaining[rule.expected_type_id] <= 0:
+                remaining.pop(rule.expected_type_id, None)
+
+        status = "ok"
+        reason = ""
+        actions: list[str] = []
+
+        # Check for hull mismatch first (automatic fail)
+        if rule.is_hull and actual_qty <= 0:
+            if not any(item.get("code") == "missing_required" and item.get("expected_type_id") == expected_type.type_id for item in hard_failures):
+                hard_failures.append(_issue(
+                    "error",
+                    "wrong_hull",
+                    f"Expected hull {expected_type.name}, but it is missing.",
+                    expected_type_id=expected_type.type_id,
+                    fitting_id=fitting.fitting_id,
+                ))
+            status = "error"
+            exact_match = False
+            reason = "Wrong hull for doctrine."
+            actions = []
+            # Hull mismatch doesn't affect item count, score will be forced to 0 later
+
+        # Optional items missing
+        elif rule.rule_kind == "optional" and actual_qty <= 0:
+            status = "warning"
+            exact_match = False
+            penalty_points += Decimal("1.00")  # -1 point for missing optional
+            used_learned_rule = True
+            reason = "Optional doctrine item is missing."
+            warnings.append(_issue(
+                "warning",
+                "optional_missing",
+                reason,
+                expected_type_id=expected_type.type_id,
+                fitting_id=fitting.fitting_id,
+            ))
+
+        # Required item missing
+        elif actual_qty < minimum_qty:
+            status = "error"
+            exact_match = False
+            penalty_points += Decimal("1.00")  # -1 point for missing required item
+            reason = f"Expected at least {minimum_qty}, found {actual_qty}."
+            hard_failures.append(_issue(
+                "error",
+                "missing_required",
+                f"{expected_type.name}: {reason}",
+                expected_type_id=expected_type.type_id,
+                actual_qty=actual_qty,
+                expected_qty=minimum_qty,
+                fitting_id=fitting.fitting_id,
+            ))
+            if not rule.is_hull:
+                if actual_qty == 0:
+                    actions.append("optional_item")
+                else:
+                    actions.append("optional_item")
+                    actions.append("quantity_tolerance")
+
+        # Item present - check quantity for consumables
+        elif actual_qty > 0:
+            # For consumables, check if quantity is within ±20%
+            if is_consumable and preferred_qty > 0:
+                tolerance_pct = Decimal("0.20")  # 20%
+                lower_bound = int(Decimal(preferred_qty) * (Decimal("1.00") - tolerance_pct))
+                upper_bound = int(Decimal(preferred_qty) * (Decimal("1.00") + tolerance_pct))
+
+                if actual_qty < lower_bound or actual_qty > upper_bound:
+                    # Outside tolerance: -0.5 points
+                    penalty_points += Decimal("0.50")
+                    exact_match = False
+                    status = "warning"
+                    reason = f"Consumable quantity {actual_qty} outside ±20% of expected {preferred_qty}."
+                    warnings.append(_issue(
+                        "warning",
+                        "consumable_quantity_tolerance",
+                        f"{expected_type.name}: {reason}",
+                        expected_type_id=expected_type.type_id,
+                        actual_qty=actual_qty,
+                        expected_qty=preferred_qty,
+                        fitting_id=fitting.fitting_id,
+                    ))
+                    actions.append("quantity_tolerance")
+
+        if applied_substitutions and "specific_substitute" not in actions:
+            actions.append("specific_substitute")
+
+        item_rows.append(_row(
+            expected_type_id=rule.expected_type_id,
+            expected_name=expected_type.name,
+            actual_qty=actual_qty,
+            included_qty=included_qty,
+            excluded_qty=excluded_qty,
+            expected_qty=preferred_qty,
+            status=status,
+            reason=reason,
+            is_missing=actual_qty <= 0 and minimum_qty > 0,
+            actions=actions,
+            category=rule.category,
+            matched_type_ids=[item["type_id"] for item in applied_substitutions],
+            matched_types=[item["name"] for item in applied_substitutions],
+        ))
+
+    # Handle extra unexpected items
+    for actual_type_id, qty in list(remaining.items()):
+        if qty <= 0:
+            continue
+        contract_item = contract_items.get(actual_type_id)
+        actual_name = contract_item.name if contract_item else str(actual_type_id)
+        actual_type_info = fitting.type_info.get(actual_type_id, TypeInfo(type_id=actual_type_id, name=actual_name))
+        is_consumable_extra = _is_consumable_market_group(actual_type_info.market_group_id)
+
+        if fitting.profile.allow_extra_items:
+            exact_match = False
+            penalty_points += Decimal("1.00")  # -1 point for extra item
+            warnings.append(_issue(
+                "warning",
+                "unexpected_extra_item",
+                f"Extra item: {actual_name} (qty: {qty}).",
+                actual_type_id=actual_type_id,
+                actual_qty=qty,
+                fitting_id=fitting.fitting_id,
+            ))
+            item_rows.append(_row(
+                expected_type_id=None,
+                expected_name=actual_name,
+                actual_type_id=actual_type_id,
+                actual_name=actual_name,
+                actual_qty=qty,
+                included_qty=int(contract_item.included_qty) if contract_item else qty,
+                excluded_qty=int(contract_item.excluded_qty) if contract_item else 0,
+                status="warning",
+                reason="Unexpected extra item allowed by profile.",
+                actions=["ignore_extra_item"],
+            ))
+        else:
+            exact_match = False
+            penalty_points += Decimal("1.00")  # -1 point for extra item
+            hard_failures.append(_issue(
+                "error",
+                "unexpected_extra_item",
+                f"Extra item not allowed: {actual_name} (qty: {qty}).",
+                actual_type_id=actual_type_id,
+                actual_qty=qty,
+                fitting_id=fitting.fitting_id,
+            ))
+            item_rows.append(_row(
+                expected_type_id=None,
+                expected_name=actual_name,
+                actual_type_id=actual_type_id,
+                actual_name=actual_name,
+                actual_qty=qty,
+                included_qty=int(contract_item.included_qty) if contract_item else qty,
+                excluded_qty=int(contract_item.excluded_qty) if contract_item else 0,
+                status="error",
+                reason="Unexpected extra item is not allowed by profile.",
+                actions=["ignore_extra_item"],
+            ))
+
+    # Calculate final score using item-count method
+    # Score = (expected_items - penalty_points) / expected_items × 100
+    has_wrong_hull = any(failure.get("code") == "wrong_hull" for failure in hard_failures)
+    if has_wrong_hull:
+        score = ZERO
+    elif expected_items == 0:
+        score = MAX_SCORE  # No items expected, perfect match
+    else:
+        points_earned = Decimal(expected_items) - penalty_points
+        score = (points_earned / Decimal(expected_items)) * Decimal("100.00")
+        score = max(score, ZERO).quantize(Decimal("0.01"))
+
+    source_hint = "auto"
+    if used_learned_rule or not exact_match:
+        source_hint = "learned_rule"
+
+    evidence = {
+        "selected_fit_id": fitting.fitting_id,
+        "selected_fit_name": fitting.fitting_name,
+        "profile": {
+            "auto_match_threshold": float(fitting.profile.auto_match_threshold),
+            "review_threshold": float(fitting.profile.review_threshold),
+            "allow_extra_items": fitting.profile.allow_extra_items,
+        },
+        "item_rows": item_rows,
+        "substitutions": [warning for warning in warnings if warning.get("code") == "substitution"],
+        "scoring_details": {
+            "expected_items": expected_items,
+            "penalty_points": float(penalty_points),
+            "points_earned": float(Decimal(expected_items) - penalty_points),
+        },
+    }
+
+    return CandidateMatch(
+        fitting_id=fitting.fitting_id,
+        fitting_name=fitting.fitting_name,
+        score=score,
+        exact_match=exact_match,
+        hard_failures=hard_failures,
+        warnings=warnings,
+        evidence=evidence,
+        source_hint=source_hint,
+        auto_threshold=fitting.profile.auto_match_threshold,
+        review_threshold=fitting.profile.review_threshold,
+    )
+
+
+def evaluate_contract_against_definition_OLD_QUANTITY_BASED(
     contract_items: dict[int, ContractItemData],
     fitting: FittingDefinition,
 ) -> CandidateMatch:
@@ -425,7 +827,7 @@ def evaluate_contract_against_definition(
                     fitting_id=fitting.fitting_id,
                 )
             )
-            actions.append("optional_item")
+            # Don't add "optional_item" action - it's already optional!
         elif actual_qty < minimum_qty:
             status = "error"
             exact_match = False
@@ -707,6 +1109,7 @@ def _select_result(
     forced_fit_id: int | None = None,
     forced_fit_name: str | None = None,
     manual_decision: dict[str, Any] | None = None,
+    close_match_threshold: Decimal = Decimal("70.00"),
 ) -> MatchResultData:
     candidate_by_fit = {candidate.fitting_id: candidate for candidate in candidates}
 
@@ -780,6 +1183,23 @@ def _select_result(
         evidence["selected_fit_id"] = getattr(top_candidate, "fitting_id", None)
         evidence["selected_fit_name"] = getattr(top_candidate, "fitting_name", None)
         evidence["candidates"] = _candidate_summaries(candidates)
+
+        # If the top candidate is a close match (meets close_match_threshold),
+        # still assign it as matched_fitting_id so it shows in stock summary
+        if top_candidate and not top_candidate.hard_failures and top_candidate.score >= close_match_threshold:
+            return MatchResultData(
+                contract_id=contract_id,
+                matched_fitting_id=top_candidate.fitting_id,
+                matched_fitting_name=top_candidate.fitting_name,
+                match_source="auto",
+                match_status="needs_review",  # Close match needs review
+                score=top_candidate.score,
+                hard_failures=[],
+                warnings=top_candidate.warnings,
+                evidence=evidence,
+            )
+
+        # Below close match threshold or has hard failures - no match
         return MatchResultData(
             contract_id=contract_id,
             matched_fitting_id=None,
@@ -850,6 +1270,7 @@ def _model_refs():
         DoctrineMatchResult,
         DoctrineQuantityTolerance,
         DoctrineSubstitutionRule,
+        SubsidyConfig,
     )
 
     return {
@@ -866,6 +1287,7 @@ def _model_refs():
         "Fitting": Fitting,
         "FittingItem": FittingItem,
         "Sum": Sum,
+        "SubsidyConfig": SubsidyConfig,
         "timezone": timezone,
     }
 
@@ -1194,10 +1616,15 @@ def match_contracts(
     DoctrineContractDecision = refs["DoctrineContractDecision"]
     Fitting = refs["Fitting"]
     Sum = refs["Sum"]
+    SubsidyConfig = refs["SubsidyConfig"]
 
     contract_ids = [int(contract_id) for contract_id in contract_ids if contract_id]
     if not contract_ids:
         return {}
+
+    # Load close match threshold setting
+    cfg = SubsidyConfig.objects.first()
+    close_match_threshold = Decimal(str(cfg.close_match_threshold if cfg else 70.00))
 
     if forced_fit_ids is None:
         forced_fit_ids = {
@@ -1290,6 +1717,7 @@ def match_contracts(
             forced_fit_id=forced_fit_id,
             forced_fit_name=fit_definitions[forced_fit_id].fitting_name if forced_fit_id in fit_definitions else None,
             manual_decision=manual_decision,
+            close_match_threshold=close_match_threshold,
         )
 
     selected_fit_ids = {
