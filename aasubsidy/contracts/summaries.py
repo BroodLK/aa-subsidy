@@ -136,35 +136,9 @@ def doctrine_stock_summary(
 
         contract_locations[cid] = locs
 
-    contract_pks = list(contract_qs.values_list("pk", flat=True))
-
-    # DEBUG: Check first few contract locations
-    print(f"\n=== CONTRACT LOCATIONS DEBUG ===")
-    print(f"Built contract_locations for {len(contract_locations)} contracts")
-    print(f"contract_pks has {len(contract_pks)} contracts")
-    print(f"First 3 keys in contract_locations: {list(contract_locations.keys())[:3]}")
-    print(f"First 3 pks in contract_pks: {contract_pks[:3]}")
-
-    # Check if they match
-    keys_set = set(contract_locations.keys())
-    pks_set = set(contract_pks)
-    in_both = keys_set & pks_set
-    print(f"Overlap: {len(in_both)} contracts in both")
-    print("=== END ===\n")
+    # CRITICAL: Convert to int because .values_list() returns strings
+    contract_pks = [int(pk) for pk in contract_qs.values_list("pk", flat=True)]
     match_map = get_or_match_contracts(contract_pks, persist=True, refresh=False)
-
-    # DEBUG
-    print(f"\n=== SUMMARY PAGE DEBUG ===")
-    print(f"Found {len(contract_pks)} contracts")
-    print(f"Got {len(match_map)} match results")
-    matched_results = [(pk, r) for pk, r in match_map.items() if r.matched_fitting_id]
-    print(f"Of those, {len(matched_results)} have a matched_fitting_id")
-    # Show first 3 MATCHED contracts (not just first 3)
-    print("First 3 matched contracts:")
-    for pk, result in matched_results[:3]:
-        print(f"  PK={pk}: fitting_id={result.matched_fitting_id}, name={result.matched_fitting_name}, status={result.match_status}, source={result.match_source}")
-    print(f"matched_fit_map will have {len(matched_results)} entries")
-    print("=== END DEBUG ===\n")
 
     # Count all contracts that have a matched fitting, regardless of status
     # This includes "matched", "needs_review", and even forced matches
@@ -369,27 +343,15 @@ def doctrine_stock_summary(
         allowed_locations = system_locations.get(system.id)
         system_stock_counts: Dict[int, int] = defaultdict(int)
 
-        # DEBUG
-        print(f"System '{system.name}': allowed_locations = {allowed_locations}")
-
-        matched_count = 0
-        skipped_count = 0
         for cid, fit_id in matched_fit_map.items():
             if allowed_locations is not None:
                 c_locs = contract_locations.get(cid, set())
                 if not (c_locs & allowed_locations):
-                    skipped_count += 1
-                    if skipped_count <= 3:  # Show first 3 skipped contracts
-                        print(f"  SKIP contract cid={cid}: its locations {c_locs} don't match {allowed_locations}")
                     continue
-                else:
-                    matched_count += 1
             else:
-                # ISSUE: If no locations configured for this system, skip ALL contracts
+                # If no locations configured for this system, skip ALL contracts
                 continue
             system_stock_counts[int(fit_id)] += 1
-
-        print(f"  -> Counted {sum(system_stock_counts.values())} contracts ({matched_count} matched, {skipped_count} skipped)")
 
         # Calculate doctrine-level totals for this system
         # requested_per_fit[fit_id] = FittingRequest.requested in this system
