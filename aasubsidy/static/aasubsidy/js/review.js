@@ -4,7 +4,6 @@
     const overlay = document.getElementById('loadingOverlay');
     const showLoading = () => { if (overlay) overlay.style.display = 'block'; };
     const hideLoading = () => { if (overlay) overlay.style.display = 'none'; };
-    showLoading();
 
     document.querySelectorAll('#contractsTable tbody tr').forEach(tr => {
       const subTd = tr.querySelector('td[data-suggested]');
@@ -127,7 +126,12 @@
       const row = document.querySelector(`.contract-row[data-id="${id}"]`);
       if (!row || !analysis) return;
 
-      const selectedName = analysis.selected_fit_name || 'No Match';
+      const candidates = Array.isArray(analysis.candidates) ? analysis.candidates : [];
+      const selectedFitId = analysis.selected_fit_id ? String(analysis.selected_fit_id) : '';
+      const selectedCandidate = selectedFitId
+        ? candidates.find(candidate => candidate && String(candidate.fit_id) === selectedFitId)
+        : null;
+      const selectedName = analysis.selected_fit_name || selectedCandidate?.fit_name || 'No Match';
       const score = Number(analysis.score || 0);
       const threshold = Number(window.AASubsidyConfig.closeMatchThreshold || 70.0);
       const warnings = Array.isArray(analysis.warnings) ? analysis.warnings : [];

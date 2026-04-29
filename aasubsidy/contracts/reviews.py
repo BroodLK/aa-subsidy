@@ -145,7 +145,10 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
             result.matched_fitting_name
             if result and result.matched_fitting_name
             else evidence.get("selected_fit_name")
-        ) or "No Match"
+        )
+        if not selected_name and pricing_fit_id and int(pricing_fit_id) in all_fittings_info:
+            selected_name = all_fittings_info[int(pricing_fit_id)].get("name")
+        selected_name = selected_name or "No Match"
 
         # Simplified doctrine display
         score = float(result.score or 0) if result else 0

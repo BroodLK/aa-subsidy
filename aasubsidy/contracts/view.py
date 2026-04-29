@@ -225,7 +225,7 @@ def _serialize_review_row(contract: CorporateContract, result, pricing_fallback:
         "selected_fit_id": None,
         "selected_fit_name": "No Match",
         "match_source": "auto",
-        "match_status": "rejected",
+        "match_status": "no_match",
         "score": 0.0,
         "warning_count": 0,
         "hard_failure_count": 0,
@@ -234,6 +234,11 @@ def _serialize_review_row(contract: CorporateContract, result, pricing_fallback:
         "candidates": [],
         "pricing": pricing,
     }
+    if pricing_fit_id and pricing_fallback and not payload.get("selected_fit_name"):
+        fit_info = pricing_fallback.get(int(pricing_fit_id))
+        if fit_info and fit_info.get("name"):
+            payload["selected_fit_id"] = int(pricing_fit_id)
+            payload["selected_fit_name"] = fit_info["name"]
     payload.update(
         {
             "id": int(contract.contract_id),
