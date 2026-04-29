@@ -885,8 +885,5 @@
       .finally(() => {
         hideLoading();
       });
-
-    // Just hide the loading spinner immediately since data is already rendered
-    hideLoading();
   });
 })();

@@ -1559,6 +1559,14 @@ def _result_from_record(record) -> MatchResultData:
     )
 
 
+def _record_matches_current_engine(record) -> bool:
+    evidence = record.evidence or {}
+    try:
+        return int(evidence.get("engine_version") or 0) == MATCH_ENGINE_VERSION
+    except (TypeError, ValueError):
+        return False
+
+
 def get_or_match_contracts(
     contract_ids: Iterable[int],
     *,
@@ -1578,7 +1586,12 @@ def get_or_match_contracts(
     existing_rows = DoctrineMatchResult.objects.filter(contract_id__in=contract_ids).select_related("matched_fitting")
     results: dict[int, MatchResultData] = {}
     for row in existing_rows:
-        results[int(row.contract_id)] = _result_from_record(row)
+        if _record_matches_current_engine(row):
+            results[int(row.contract_id)] = _result_from_record(row)
+
+    missing_or_stale_ids = [contract_id for contract_id in contract_ids if contract_id not in results]
+    if missing_or_stale_ids:
+        results.update(match_contracts(missing_or_stale_ids, persist=persist))
 
     return {contract_id: results[contract_id] for contract_id in contract_ids if contract_id in results}
 

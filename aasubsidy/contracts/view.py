@@ -464,16 +464,10 @@ class ReviewSummariesView(PermissionRequiredMixin, View):
             .order_by("-date_issued")
         )
 
-        # Fetch existing doctrine matches
+        # The review table AJAX refresh must reflect current doctrine rules,
+        # fittings, and contract items, not a previously cached dashboard result.
         contract_pks = [contract.pk for contract in contracts]
-        results = get_or_match_contracts(contract_pks, persist=True)
-
-        # Trigger matching for any missing results (AJAX refresh context)
-        missing_pks = [pk for pk in contract_pks if pk not in results]
-        if missing_pks:
-            from .matching import match_contracts
-            additional_results = match_contracts(missing_pks, persist=True)
-            results.update(additional_results)
+        results = get_or_match_contracts(contract_pks, persist=True, refresh=True)
 
         pricing_fit_ids = {
             int(result.matched_fitting_id or (result.evidence or {}).get("selected_fit_id") or 0)
