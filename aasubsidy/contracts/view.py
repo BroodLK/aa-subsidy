@@ -22,6 +22,7 @@ from allianceauth.eveonline.models import EveCharacter
 from corptools.models import CorporateContract, CorporateContractItem
 from fittings.models import Fitting
 
+from ..contracts.filters import apply_contract_exclusions
 from ..contracts.matching import get_or_match_contract, get_or_match_contracts, match_contract
 from ..contracts.pricing import get_fitting_pricing_map
 from ..contracts.reviews import reviewer_table
@@ -57,16 +58,15 @@ def _main_name_for_issuer(issuer_eve_id: int | None, fallback_name: str, cache: 
     if issuer_eve_id in cache:
         return cache[issuer_eve_id]
     try:
-        char = (
-            EveCharacter.objects.filter(character_id=issuer_eve_id)
-            .select_related("character_ownership__user__profile__main_character")
-            .only("id")
+        ownership = (
+            CharacterOwnership.objects.filter(character__character_id=issuer_eve_id)
+            .select_related("user__profile__main_character")
             .first()
         )
-        if not char or not getattr(char, "character_ownership", None):
+        if not ownership:
             cache[issuer_eve_id] = fallback_name
             return fallback_name
-        profile = getattr(char.character_ownership.user, "profile", None)
+        profile = getattr(ownership.user, "profile", None)
         main = getattr(profile, "main_character", None) if profile else None
         resolved = getattr(main, "character_name", None) or fallback_name
         cache[issuer_eve_id] = resolved
@@ -350,6 +350,7 @@ class UserStatsView(LoginRequiredMixin, PermissionRequiredMixin, TemplateView):
             .select_related("issuer_name", "start_location_name", "aasubsidy_meta")
             .order_by("-date_issued")
         )
+        contracts_qs = apply_contract_exclusions(contracts_qs, cfg)
 
         per_character, per_character_totals, rows = _build_stats_payload(contracts_qs)
         ctx["per_character"] = per_character
@@ -371,6 +372,7 @@ class GlobalStatsView(LoginRequiredMixin, PermissionRequiredMixin, TemplateView)
             .select_related("issuer_name", "start_location_name", "aasubsidy_meta")
             .order_by("-date_issued")
         )
+        contracts_qs = apply_contract_exclusions(contracts_qs, cfg)
 
         per_character, per_character_totals, rows = _build_stats_payload(
             contracts_qs, aggregate_to_main=True

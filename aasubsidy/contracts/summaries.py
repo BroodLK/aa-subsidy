@@ -283,7 +283,6 @@ def doctrine_stock_summary(
             character_ownership__user_id=row["user_id"]
         )
         .select_related("character_ownership__user__profile__main_character")
-        .only("id")
         .first()
         for row in FittingClaim.objects.filter(fitting_id__in=fit_ids)
         .values("user_id")

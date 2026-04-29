@@ -1,7 +1,7 @@
 from collections import defaultdict
 from typing import Dict, List, Tuple
 
-from django.db.models import Sum, Q
+from django.db.models import Sum
 from allianceauth.eveonline.models import EveCharacter
 from allianceauth.authentication.models import CharacterOwnership
 from corptools.models import CorporateContract
@@ -12,28 +12,23 @@ from ..models import CorporateContractSubsidy
 def _user_id_for_issuer_eve_id(issuer_eve_id: int | None) -> int | None:
     if not issuer_eve_id:
         return None
-    char = (
-        EveCharacter.objects.filter(character_id=issuer_eve_id)
-        .select_related("character_ownership__user")
-        .only("id", "character_id")
+    return (
+        CharacterOwnership.objects.filter(character__character_id=issuer_eve_id)
+        .values_list("user_id", flat=True)
         .first()
     )
-    if not char or not getattr(char, "character_ownership", None):
-        return None
-    return getattr(char.character_ownership.user, "id", None)
 
 def _main_name_for_user_id(user_id: int | None, fallback_name: str) -> str:
     if not user_id:
         return fallback_name
-    any_char = (
-        EveCharacter.objects.filter(character_ownership__user_id=user_id)
-        .select_related("character_ownership__user__profile__main_character")
-        .only("id")
+    ownership = (
+        CharacterOwnership.objects.filter(user_id=user_id)
+        .select_related("user__profile__main_character")
         .first()
     )
-    if not any_char or not getattr(any_char, "character_ownership", None):
+    if not ownership:
         return fallback_name
-    profile = getattr(any_char.character_ownership.user, "profile", None)
+    profile = getattr(ownership.user, "profile", None)
     main = getattr(profile, "main_character", None) if profile else None
     return getattr(main, "character_name", None) or fallback_name
 
@@ -69,8 +64,6 @@ def aggregate_payments_to_main() -> Tuple[List[dict], Dict[str, int]]:
         .annotate(total=Sum("subsidy_amount"))
     )
 
-    user_ids_seen: set[int] = set()
-
     for row in base_qs:
         issuer_char_id = row.get("contract__issuer_name__eve_id")
         issuer_name = row.get("contract__issuer_name__name") or "Unknown"
@@ -98,8 +91,6 @@ def aggregate_payments_to_main() -> Tuple[List[dict], Dict[str, int]]:
             user_bucket["approved_paid"] += amt
             if exempt and amt < 0:
                 user_bucket["exempt_paid_negative_abs"] += abs(amt)
-
-        user_ids_seen.add(user_id)
 
     rows: List[dict] = []
     totals = {"approved_unpaid": 0, "approved_paid": 0, "total_approved": 0}
