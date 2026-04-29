@@ -465,13 +465,6 @@ class ReviewSummariesView(PermissionRequiredMixin, View):
         contract_pks = [contract.pk for contract in contracts]
         results = get_or_match_contracts(contract_pks, persist=True)
 
-        # Ensure all contracts have match results
-        missing_pks = [pk for pk in contract_pks if pk not in results]
-        if missing_pks:
-            from .matching import match_contracts
-            additional_results = match_contracts(missing_pks, persist=True)
-            results.update(additional_results)
-
         pricing_fit_ids = {
             int(result.matched_fitting_id or (result.evidence or {}).get("selected_fit_id") or 0)
             for result in results.values()
@@ -723,8 +716,8 @@ class MatchPreviewView(PermissionRequiredMixin, View):
         except CorporateContract.DoesNotExist:
             return JsonResponse({"ok": False, "error": "not_found"}, status=404)
 
-        # IMPORTANT: Use refresh=False to respect forced matches
-        result = get_or_match_contract(cc.pk, persist=True, refresh=False)
+        # IMPORTANT: Use refresh=True to re-evaluate matching on detail view
+        result = get_or_match_contract(cc.pk, persist=True, refresh=True)
         return JsonResponse({"ok": True, "match": _serialize_match_result(result, include_items=True)})
 
 
@@ -747,7 +740,7 @@ class AcceptOnceView(PermissionRequiredMixin, View):
         fit_id_raw = (request.POST.get("fit_id") or "").strip()
         fit_id = int(fit_id_raw) if fit_id_raw.isdigit() else getattr(meta, "forced_fitting_id", None)
         if not fit_id:
-            preview = get_or_match_contract(cc.pk, persist=True)
+            preview = get_or_match_contract(cc.pk, persist=True, refresh=True)
             fit_id = preview.matched_fitting_id or preview.evidence.get("selected_fit_id")
         if not fit_id:
             return JsonResponse({"ok": False, "error": "fit_required"}, status=400)
@@ -939,8 +932,8 @@ class ContractItemsView(PermissionRequiredMixin, View):
         except CorporateContract.DoesNotExist:
             return JsonResponse({"ok": False, "error": "not_found"}, status=404)
 
-        # IMPORTANT: Use refresh=False to respect forced matches
-        result = get_or_match_contract(cc.pk, persist=True, refresh=False)
+        # IMPORTANT: Use refresh=True to re-evaluate matching on detail view
+        result = get_or_match_contract(cc.pk, persist=True, refresh=True)
         analysis = _serialize_match_result(result, include_items=True)
         items = []
         for row in analysis.get("items", []):

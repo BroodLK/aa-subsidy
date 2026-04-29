@@ -1578,19 +1578,9 @@ def get_or_match_contracts(
 
     existing_rows = DoctrineMatchResult.objects.filter(contract_id__in=contract_ids).select_related("matched_fitting")
     results: dict[int, MatchResultData] = {}
-    stale_ids: list[int] = []
     for row in existing_rows:
-        evidence = row.evidence or {}
-        # IMPORTANT: Don't recalculate forced matches or manual accepts even if engine version changed
-        is_manual = row.match_source in ("forced", "manual_accept", "learned_rule")
-        if not is_manual and evidence.get("engine_version") != MATCH_ENGINE_VERSION:
-            stale_ids.append(int(row.contract_id))
-            continue
         results[int(row.contract_id)] = _result_from_record(row)
-    missing_ids = [contract_id for contract_id in contract_ids if contract_id not in results and contract_id not in stale_ids]
-    refresh_ids = stale_ids + missing_ids
-    if refresh_ids:
-        results.update(match_contracts(refresh_ids, persist=persist))
+
     return {contract_id: results[contract_id] for contract_id in contract_ids if contract_id in results}
 
 
