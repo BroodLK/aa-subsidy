@@ -357,17 +357,24 @@ def doctrine_stock_summary(
         # DEBUG
         print(f"System '{system.name}': allowed_locations = {allowed_locations}")
 
+        matched_count = 0
+        skipped_count = 0
         for cid, fit_id in matched_fit_map.items():
             if allowed_locations is not None:
                 c_locs = contract_locations.get(cid, set())
                 if not (c_locs & allowed_locations):
+                    skipped_count += 1
+                    if skipped_count <= 3:  # Show first 3 skipped contracts
+                        print(f"  SKIP contract cid={cid}: its locations {c_locs} don't match {allowed_locations}")
                     continue
+                else:
+                    matched_count += 1
             else:
                 # ISSUE: If no locations configured for this system, skip ALL contracts
                 continue
             system_stock_counts[int(fit_id)] += 1
 
-        print(f"  -> Counted {sum(system_stock_counts.values())} contracts total")
+        print(f"  -> Counted {sum(system_stock_counts.values())} contracts ({matched_count} matched, {skipped_count} skipped)")
 
         # Calculate doctrine-level totals for this system
         # requested_per_fit[fit_id] = FittingRequest.requested in this system
