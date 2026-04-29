@@ -443,7 +443,7 @@ class ReviewSummariesView(PermissionRequiredMixin, View):
     permission_required = "aasubsidy.review_subsidy"
 
     def get(self, request):
-        raw_ids = (request.GET.get("contract_ids") or "").strip()
+        raw_ids = (request.GET.get("ids") or request.GET.get("contract_ids") or "").strip()
         try:
             public_contract_ids = [int(value) for value in raw_ids.split(",") if value.strip()]
         except ValueError:
@@ -453,12 +453,14 @@ class ReviewSummariesView(PermissionRequiredMixin, View):
             return JsonResponse({"ok": True, "rows": []})
 
         cfg = SubsidyConfig.active()
+        contracts_query = CorporateContract.objects.filter(
+            contract_id__in=public_contract_ids
+        )
+        if cfg.corporation_id:
+            contracts_query = contracts_query.filter(corporation_id=cfg.corporation_id)
+
         contracts = list(
-            CorporateContract.objects.filter(
-                contract_id__in=public_contract_ids,
-                corporation_id=cfg.corporation_id,
-            )
-            .select_related("aasubsidy_meta")
+            contracts_query.select_related("aasubsidy_meta__forced_fitting")
             .order_by("-date_issued")
         )
 

@@ -1528,7 +1528,7 @@ def _persist_results(results: list[MatchResultData]) -> None:
         DoctrineMatchResult.objects.bulk_update(
             to_update,
             [
-                "matched_fitting",
+                "matched_fitting_id",
                 "match_source",
                 "match_status",
                 "score",
@@ -1611,9 +1611,8 @@ def match_contracts(
     if not contract_ids:
         return {}
 
-    # Load close match threshold setting
-    cfg = SubsidyConfig.objects.first()
-    close_match_threshold = Decimal(str(cfg.close_match_threshold if cfg else 70.00))
+    cfg = SubsidyConfig.active()
+    close_match_threshold = Decimal(str(cfg.close_match_threshold))
 
     if forced_fit_ids is None:
         forced_fit_ids = {
