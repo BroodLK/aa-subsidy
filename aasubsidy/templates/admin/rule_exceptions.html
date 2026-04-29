@@ -38,6 +38,17 @@
           <div>
             <div class="exceptions-panel-kicker">{% trans "Doctrine Fit" %}</div>
             <h3 class="exceptions-panel-title">{{ data.fitting.name }}</h3>
+            <div class="exceptions-panel-meta">
+              <span class="text-info">{{ data.fitting.ship_type.name }}</span>
+              {% if data.fitting.doctrines.all %}
+              <span class="text-muted mx-1">•</span>
+              <span class="text-muted">
+                {% for doctrine in data.fitting.doctrines.all %}
+                  {{ doctrine.name }}{% if not forloop.last %}, {% endif %}
+                {% endfor %}
+              </span>
+              {% endif %}
+            </div>
           </div>
           <div class="rule-count-badges">
             {% if data.item_rules %}
@@ -64,7 +75,7 @@
                     <i class="fas {% if rule.rule_kind == 'optional' %}fa-circle-question{% else %}fa-eye-slash{% endif %} text-primary"></i>
                   </div>
                   <div class="rule-item-details">
-                    <div class="rule-item-name">{{ rule.type.name }}</div>
+                    <div class="rule-item-name">{{ rule.eve_type.name }}</div>
                     <div class="rule-item-meta">
                       <span class="rule-badge rule-badge-{{ rule.rule_kind }}">{{ rule.get_rule_kind_display }}</span>
                       {% if rule.category %}
@@ -138,7 +149,7 @@
                     <i class="fas fa-balance-scale text-warning"></i>
                   </div>
                   <div class="rule-item-details">
-                    <div class="rule-item-name">{{ tolerance.type.name }}</div>
+                    <div class="rule-item-name">{{ tolerance.eve_type.name }}</div>
                     <div class="rule-item-meta">
                       <span class="rule-badge rule-badge-quantity">{{ tolerance.get_mode_display }}</span>
                       <span class="text-muted">• Range: {{ tolerance.lower_bound }} to {{ tolerance.upper_bound }}</span>
@@ -221,6 +232,11 @@
   font-size: 1.2rem;
   font-weight: 700;
   color: inherit;
+}
+
+.exceptions-panel-meta {
+  font-size: 0.85rem;
+  margin-top: 0.25rem;
 }
 
 .exceptions-panel-body {

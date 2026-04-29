@@ -24,7 +24,11 @@ class RuleExceptionsView(PermissionRequiredMixin, TemplateView):
         fittings_with_rules = {}
 
         # Collect item rules (optional, ignored)
-        for rule in DoctrineItemRule.objects.select_related('profile__fitting', 'eve_type').filter(
+        for rule in DoctrineItemRule.objects.select_related(
+            'profile__fitting__ship_type', 'eve_type'
+        ).prefetch_related(
+            'profile__fitting__doctrines'
+        ).filter(
             rule_kind__in=['optional', 'ignore']
         ).order_by('profile__fitting__name', 'eve_type__name'):
             fitting_id = rule.profile.fitting_id
@@ -39,7 +43,9 @@ class RuleExceptionsView(PermissionRequiredMixin, TemplateView):
 
         # Collect substitution rules
         for rule in DoctrineSubstitutionRule.objects.select_related(
-            'profile__fitting', 'expected_type', 'allowed_type'
+            'profile__fitting__ship_type', 'expected_type', 'allowed_type'
+        ).prefetch_related(
+            'profile__fitting__doctrines'
         ).order_by('profile__fitting__name', 'expected_type__name'):
             fitting_id = rule.profile.fitting_id
             if fitting_id not in fittings_with_rules:
@@ -53,7 +59,9 @@ class RuleExceptionsView(PermissionRequiredMixin, TemplateView):
 
         # Collect quantity tolerances
         for tolerance in DoctrineQuantityTolerance.objects.select_related(
-            'profile__fitting', 'eve_type'
+            'profile__fitting__ship_type', 'eve_type'
+        ).prefetch_related(
+            'profile__fitting__doctrines'
         ).order_by('profile__fitting__name', 'eve_type__name'):
             fitting_id = tolerance.profile.fitting_id
             if fitting_id not in fittings_with_rules:
