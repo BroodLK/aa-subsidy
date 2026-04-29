@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 MAX_SCORE = Decimal("100.00")
 ZERO = Decimal("0.00")
-MATCH_ENGINE_VERSION = 4
+MATCH_ENGINE_VERSION = 5
 
 
 @dataclass(slots=True)
@@ -1183,7 +1183,7 @@ def _select_result(
         evidence["selected_fit_name"] = getattr(top_candidate, "fitting_name", None)
         evidence["candidates"] = _candidate_summaries(candidates)
 
-        if top_candidate and not top_candidate.hard_failures and top_candidate.score >= close_match_threshold:
+        if top_candidate and top_candidate.score >= close_match_threshold:
             return MatchResultData(
                 contract_id=contract_id,
                 matched_fitting_id=top_candidate.fitting_id,

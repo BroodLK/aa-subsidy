@@ -220,6 +220,38 @@ class TestDoctrineMatching(unittest.TestCase):
         self.assertTrue(any(row["status"] == "error" for row in result.evidence["item_rows"]))
         self.assertTrue(any(issue["code"] == "missing_required" for issue in result.hard_failures))
 
+    def test_close_match_above_threshold_commits_candidate(self):
+        fit = _fit_definition(
+            rules=[
+                ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
+                ItemRuleData(200, "Module A", expected_quantity=1),
+                ItemRuleData(201, "Module B", expected_quantity=1),
+                ItemRuleData(202, "Module C", expected_quantity=1),
+                ItemRuleData(203, "Missing Module", expected_quantity=1),
+            ],
+            type_info={
+                100: TypeInfo(100, "Hull"),
+                200: TypeInfo(200, "Module A"),
+                201: TypeInfo(201, "Module B"),
+                202: TypeInfo(202, "Module C"),
+                203: TypeInfo(203, "Missing Module"),
+            },
+        )
+        contract = {
+            100: ContractItemData(100, "Hull", included_qty=1),
+            200: ContractItemData(200, "Module A", included_qty=1),
+            201: ContractItemData(201, "Module B", included_qty=1),
+            202: ContractItemData(202, "Module C", included_qty=1),
+        }
+
+        candidate = evaluate_contract_against_definition(contract, fit)
+        result = _select_result(contract_id=42, candidates=[candidate], manual_decision=None)
+
+        self.assertEqual(result.score, Decimal("80.00"))
+        self.assertEqual(result.match_status, "needs_review")
+        self.assertEqual(result.matched_fitting_id, 1)
+        self.assertEqual(result.evidence["selected_fit_name"], "Test Fit")
+
     def test_threshold_passing_ambiguous_match_commits_selected_candidate(self):
         base_rules = [
             ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
