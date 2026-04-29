@@ -354,14 +354,20 @@ def doctrine_stock_summary(
         allowed_locations = system_locations.get(system.id)
         system_stock_counts: Dict[int, int] = defaultdict(int)
 
+        # DEBUG
+        print(f"System '{system.name}': allowed_locations = {allowed_locations}")
+
         for cid, fit_id in matched_fit_map.items():
             if allowed_locations is not None:
                 c_locs = contract_locations.get(cid, set())
                 if not (c_locs & allowed_locations):
                     continue
             else:
+                # ISSUE: If no locations configured for this system, skip ALL contracts
                 continue
             system_stock_counts[int(fit_id)] += 1
+
+        print(f"  -> Counted {sum(system_stock_counts.values())} contracts total")
 
         # Calculate doctrine-level totals for this system
         # requested_per_fit[fit_id] = FittingRequest.requested in this system
