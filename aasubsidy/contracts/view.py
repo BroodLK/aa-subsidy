@@ -26,7 +26,7 @@ from ..contracts.filters import apply_contract_exclusions
 from ..contracts.matching import get_or_match_contract, get_or_match_contracts, match_contract
 from ..contracts.pricing import get_fitting_pricing_map
 from ..contracts.reviews import reviewer_table
-from ..contracts.summaries import doctrine_stock_summary, doctrine_insights
+from ..contracts.summaries import claimed_multibuy_summary, doctrine_stock_summary, doctrine_insights
 from ..models import (
     CorporateContractSubsidy,
     DoctrineContractDecision,
@@ -298,6 +298,20 @@ class DeleteClaimView(PermissionRequiredMixin, View):
         else:
             return JsonResponse({"ok": True, "fit_id": fit_id, "deleted": False})
 
+
+@method_decorator(csrf_exempt, name="dispatch")
+class ClearAllClaimsView(PermissionRequiredMixin, View):
+    permission_required = "aasubsidy.basic_access"
+
+    def post(self, request):
+        deleted, _ = FittingClaim.objects.filter(user=request.user).delete()
+        if deleted:
+            messages.success(request, f"Cleared {deleted} claims.")
+        else:
+            messages.info(request, "No claims to clear.")
+        return JsonResponse({"ok": True, "deleted": int(deleted)})
+
+
 @method_decorator(never_cache, name="dispatch")
 class MainView(PermissionRequiredMixin, TemplateView):
     template_name = "contracts/summary.html"
@@ -319,6 +333,9 @@ class MainView(PermissionRequiredMixin, TemplateView):
             "available": sum(s["totals"]["available"] for s in systems),
             "needed": sum(s["totals"]["needed"] for s in systems),
         }
+        ctx["my_claims_summary"] = claimed_multibuy_summary(
+            self.request.user.id if self.request.user.is_authenticated else None
+        )
 
         if self.request.user.is_authenticated:
             pref = UserTablePreference.objects.filter(

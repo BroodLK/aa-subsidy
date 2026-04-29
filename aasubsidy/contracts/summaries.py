@@ -54,6 +54,102 @@ def _ceil_to_increment(x: Decimal, inc: Decimal) -> Decimal:
     return q * inc
 
 
+def claimed_multibuy_summary(user_id: int | None) -> dict:
+    empty = {
+        "claim_count": 0,
+        "fit_count": 0,
+        "item_count": 0,
+        "total_cost": 0,
+        "total_volume": 0,
+        "lines": [],
+        "raw": "",
+    }
+    if not user_id:
+        return empty
+
+    claims = list(
+        FittingClaim.objects.filter(user_id=user_id, quantity__gt=0)
+        .select_related("fitting__ship_type")
+        .order_by("fitting__name", "fitting_id")
+    )
+    if not claims:
+        return empty
+
+    fit_quantities = {
+        int(claim.fitting_id): int(claim.quantity or 0)
+        for claim in claims
+        if int(claim.quantity or 0) > 0
+    }
+    type_totals: dict[int, dict[str, object]] = {}
+
+    def add_type(type_id: int | None, name: str | None, quantity: int) -> None:
+        if not type_id or quantity <= 0:
+            return
+        entry = type_totals.setdefault(
+            int(type_id),
+            {"name": name or str(type_id), "quantity": 0},
+        )
+        entry["quantity"] = int(entry["quantity"]) + int(quantity)
+
+    for claim in claims:
+        fit = claim.fitting
+        add_type(
+            getattr(fit, "ship_type_type_id", None),
+            getattr(getattr(fit, "ship_type", None), "name", None),
+            int(claim.quantity or 0),
+        )
+
+    item_rows = (
+        FittingItem.objects.filter(fit_id__in=fit_quantities.keys())
+        .values("fit_id", "type_id", "type_fk__name")
+        .annotate(total_qty=Sum("quantity"))
+        .order_by("type_fk__name", "type_id")
+    )
+    for row in item_rows:
+        fit_qty = fit_quantities.get(int(row["fit_id"]), 0)
+        add_type(
+            int(row["type_id"]),
+            row["type_fk__name"],
+            int(row["total_qty"] or 0) * fit_qty,
+        )
+
+    type_ids = sorted(type_totals.keys())
+    price_by_type = {
+        int(type_id): Decimal(sell or 0)
+        for type_id, sell in SubsidyItemPrice.objects.filter(eve_type_id__in=type_ids)
+        .values_list("eve_type_id", "sell")
+    }
+    volume_by_type = {
+        int(row["id"]): Decimal(row["eff_volume"] or 0)
+        for row in EveType.objects.filter(id__in=type_ids)
+        .annotate(eff_volume=Coalesce(F("packaged_volume"), F("volume")))
+        .values("id", "eff_volume")
+    }
+
+    lines = []
+    total_cost = Decimal("0")
+    total_volume = Decimal("0")
+    for type_id, entry in sorted(
+        type_totals.items(),
+        key=lambda item: str(item[1]["name"]).lower(),
+    ):
+        quantity = int(entry["quantity"])
+        name = str(entry["name"])
+        total_cost += price_by_type.get(type_id, Decimal("0")) * quantity
+        total_volume += volume_by_type.get(type_id, Decimal("0")) * quantity
+        lines.append({"name": name, "quantity": quantity})
+
+    return {
+        "claim_count": len(claims),
+        "fit_count": sum(fit_quantities.values()),
+        "item_count": sum(int(line["quantity"]) for line in lines),
+        "total_cost": int(total_cost),
+        "total_volume": round(float(total_volume), 2),
+        "lines": lines,
+        "raw": "\n".join(f"{line['name']}\t{line['quantity']}" for line in lines),
+    }
+
+
 def doctrine_stock_summary(
     start,
     end,

@@ -24,6 +24,68 @@
       toastInst.show();
     }
 
+    const claimsSummaryEl = document.getElementById('myClaimsSummaryData');
+    let claimsSummary = { raw: '', lines: [] };
+    if (claimsSummaryEl) {
+      try {
+        claimsSummary = JSON.parse(claimsSummaryEl.textContent || '{}') || claimsSummary;
+      } catch (_) {}
+    }
+
+    const multibuyModalEl = document.getElementById('multibuyModal');
+    const openMultibuyBtn = document.getElementById('openMultibuyBtn');
+    const copyMultibuyBtn = document.getElementById('copyMultibuyBtn');
+    const multibuyText = document.getElementById('multibuyText');
+    const multibuyEmpty = document.getElementById('multibuyEmpty');
+    let multibuyModal;
+
+    if (openMultibuyBtn) {
+      openMultibuyBtn.addEventListener('click', () => {
+        const raw = String(claimsSummary.raw || '').trim();
+        if (multibuyText) multibuyText.value = raw;
+        if (multibuyEmpty) multibuyEmpty.classList.toggle('d-none', !!raw);
+        if (copyMultibuyBtn) copyMultibuyBtn.disabled = !raw;
+        multibuyModal = multibuyModal || (window.bootstrap && multibuyModalEl ? new bootstrap.Modal(multibuyModalEl) : null);
+        if (multibuyModal) multibuyModal.show();
+      });
+    }
+
+    if (copyMultibuyBtn) {
+      copyMultibuyBtn.addEventListener('click', async () => {
+        const raw = multibuyText ? String(multibuyText.value || '').trim() : String(claimsSummary.raw || '').trim();
+        if (!raw) return;
+        try {
+          await navigator.clipboard?.writeText(raw);
+          showToast();
+        } catch (_) {}
+      });
+    }
+
+    const clearAllClaimsBtn = document.getElementById('clearAllClaimsBtn');
+    if (clearAllClaimsBtn) {
+      clearAllClaimsBtn.addEventListener('click', async () => {
+        if (!confirm('Clear all of your claims?')) return;
+        try {
+          showLoading();
+          const resp = await fetch(window.AASubsidyConfig.clearAllClaimsUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify({}),
+            credentials: 'same-origin',
+          });
+          const data = await resp.json();
+          if (!resp.ok || !data.ok) throw new Error(data.error || 'Failed to clear claims');
+          window.location.reload();
+        } catch (err) {
+          hideLoading();
+          alert(err.message || 'Error clearing claims.');
+        }
+      });
+    }
+
     const modalEl = document.getElementById('claimModal');
     const qtyEl = document.getElementById('claimQty');
     const fitIdEl = document.getElementById('claimFitId');
