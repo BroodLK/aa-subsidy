@@ -347,17 +347,16 @@
             let html = '<table class="table table-sm table-hover mb-0" style="font-size: 0.875rem;">';
             html = summaryHtml + html;
             html += showValidation
-                ? '<thead class="table-dark"><tr><th style="width: 25%;">Item</th><th class="text-end" style="width: 8%;">Qty</th><th class="text-center" style="width: 8%;">In/Ex</th><th class="text-center" style="width: 10%;">Status</th><th style="width: 24%;">Details</th><th style="width: 25%;">Actions</th></tr></thead><tbody>'
+                ? '<thead class="table-dark"><tr><th style="width: 30%;">Item</th><th class="text-end" style="width: 10%;">Qty</th><th class="text-center" style="width: 12%;">Status</th><th style="width: 28%;">Details</th><th style="width: 20%;">Actions</th></tr></thead><tbody>'
                 : '<thead class="table-dark"><tr><th>Type</th><th class="text-end">Qty</th><th class="text-center">Included</th></tr></thead><tbody>';
             data.items.forEach(item => {
-                const rowClass = item.status === 'error' ? 'table-danger' : item.status === 'warning' ? 'table-warning' : '';
+                const textClass = item.status === 'error' ? 'text-danger' : item.status === 'warning' ? 'text-warning' : '';
                 html += showValidation
-                    ? `<tr class="${rowClass}">
-                        <td class="fw-semibold">${item.name}</td>
-                        <td class="text-end font-monospace">${item.qty.toLocaleString()}</td>
-                        <td class="text-center">${renderIncluded(item)}</td>
+                    ? `<tr>
+                        <td class="fw-semibold ${textClass}">${item.name}</td>
+                        <td class="text-end font-monospace ${textClass}">${item.qty.toLocaleString()}</td>
                         <td class="text-center">${renderStatus(item)}</td>
-                        <td><small class="text-muted">${item.reason || '<span class="fst-italic">No issues</span>'}</small></td>
+                        <td><small class="${textClass || 'text-muted'}">${item.reason || '<span class="fst-italic">No issues</span>'}</small></td>
                         <td>${renderActions(item)}</td>
                     </tr>`
                     : `<tr>
