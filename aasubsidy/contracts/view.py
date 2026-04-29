@@ -464,10 +464,10 @@ class ReviewSummariesView(PermissionRequiredMixin, View):
             .order_by("-date_issued")
         )
 
-        # The review table AJAX refresh must reflect current doctrine rules,
-        # fittings, and contract items, not a previously cached dashboard result.
+        # Missing or stale match rows are calculated and persisted here. Current
+        # saved rows are reused so repeat page loads stay fast.
         contract_pks = [contract.pk for contract in contracts]
-        results = get_or_match_contracts(contract_pks, persist=True, refresh=True)
+        results = get_or_match_contracts(contract_pks, persist=True, refresh=False)
 
         pricing_fit_ids = {
             int(result.matched_fitting_id or (result.evidence or {}).get("selected_fit_id") or 0)

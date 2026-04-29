@@ -130,6 +130,8 @@
       const selectedName = analysis.selected_fit_name || 'No Match';
       const score = Number(analysis.score || 0);
       const threshold = Number(window.AASubsidyConfig.closeMatchThreshold || 70.0);
+      const warnings = Array.isArray(analysis.warnings) ? analysis.warnings : [];
+      const isAmbiguous = warnings.some(issue => issue && issue.code === 'ambiguous_match');
 
       // Simplified doctrine display
       const doctrineIdx = getColumnIndex('doctrine');
@@ -140,15 +142,19 @@
 
         if (!selectedName || selectedName === 'No Match') {
           doctrineHtml = '<div class="text-muted">No Match</div>';
+        } else if (isAmbiguous) {
+          doctrineHtml = `<div class="text-warning">Ambiguous: ${escapeHtml(selectedName)}</div>`;
+        } else if (analysis.match_status === 'needs_review') {
+          doctrineHtml = `<div class="text-warning">Needs review: ${escapeHtml(selectedName)}</div>`;
         } else if (score >= 100.0) {
           // Perfect match - just show the name
-          doctrineHtml = `<div>${selectedName}</div>`;
+          doctrineHtml = `<div>${escapeHtml(selectedName)}</div>`;
         } else if (score >= threshold) {
           // Close match
-          doctrineHtml = `<div class="text-warning">Close match to ${selectedName}</div>`;
+          doctrineHtml = `<div class="text-warning">Close match to ${escapeHtml(selectedName)}</div>`;
         } else {
           // Lower score match
-          doctrineHtml = `<div class="text-warning">${selectedName} (${score.toFixed(0)}%)</div>`;
+          doctrineHtml = `<div class="text-warning">${escapeHtml(selectedName)} (${score.toFixed(0)}%)</div>`;
         }
 
         if (doctrineDisplay) doctrineDisplay.innerHTML = doctrineHtml;

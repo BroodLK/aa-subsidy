@@ -1183,15 +1183,13 @@ def _select_result(
         evidence["selected_fit_name"] = getattr(top_candidate, "fitting_name", None)
         evidence["candidates"] = _candidate_summaries(candidates)
 
-        # If the top candidate is a close match (meets close_match_threshold),
-        # still assign it as matched_fitting_id so it shows in stock summary
         if top_candidate and not top_candidate.hard_failures and top_candidate.score >= close_match_threshold:
             return MatchResultData(
                 contract_id=contract_id,
                 matched_fitting_id=top_candidate.fitting_id,
                 matched_fitting_name=top_candidate.fitting_name,
                 match_source="auto",
-                match_status="needs_review",  # Close match needs review
+                match_status="needs_review",
                 score=top_candidate.score,
                 hard_failures=[],
                 warnings=top_candidate.warnings,
@@ -1226,6 +1224,9 @@ def _select_result(
         )
     evidence = dict(selected.evidence)
     evidence["candidates"] = _candidate_summaries(candidates)
+    if ambiguous or match_status != "matched":
+        evidence["selected_fit_id"] = selected.fitting_id
+        evidence["selected_fit_name"] = selected.fitting_name
     return MatchResultData(
         contract_id=contract_id,
         matched_fitting_id=selected.fitting_id,

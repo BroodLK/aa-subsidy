@@ -115,7 +115,7 @@ class TestDoctrineMatching(unittest.TestCase):
                 ItemRuleData(400, "Ammo", expected_quantity=3200, category="ammo"),
             ],
             tolerances={400: [QuantityToleranceData(400, mode="extra_only", lower_bound=0, upper_bound=1000, penalty_points=Decimal("2.00"))]},
-            type_info={100: TypeInfo(100, "Hull"), 400: TypeInfo(400, "Ammo")},
+            type_info={100: TypeInfo(100, "Hull"), 400: TypeInfo(400, "Ammo", market_group_id=11)},
         )
         contract = {
             100: ContractItemData(100, "Hull", included_qty=1),
@@ -125,8 +125,8 @@ class TestDoctrineMatching(unittest.TestCase):
         result = evaluate_contract_against_definition(contract, fit)
 
         self.assertEqual(result.hard_failures, [])
-        self.assertTrue(any(issue["code"] == "quantity_tolerance" for issue in result.warnings))
-        self.assertEqual(result.score, Decimal("98.00"))
+        self.assertTrue(any(issue["code"] == "consumable_quantity_tolerance" for issue in result.warnings))
+        self.assertEqual(result.score, Decimal("75.00"))
 
     def test_specific_substitute_matches_with_penalty(self):
         fit = _fit_definition(
@@ -150,7 +150,7 @@ class TestDoctrineMatching(unittest.TestCase):
 
         self.assertEqual(result.hard_failures, [])
         self.assertTrue(any(issue["code"] == "substitution" for issue in result.warnings))
-        self.assertEqual(result.score, Decimal("96.00"))
+        self.assertEqual(result.score, Decimal("50.00"))
         self.assertEqual(result.source_hint, "learned_rule")
 
     def test_forced_fit_and_rerun_keep_same_analysis(self):
@@ -175,7 +175,9 @@ class TestDoctrineMatching(unittest.TestCase):
         forced = _select_result(contract_id=1, candidates=[candidate], forced_fit_id=1, manual_decision=None)
         rerun = _select_result(contract_id=1, candidates=[candidate], forced_fit_id=None, manual_decision=None)
 
-        self.assertEqual(forced.matched_fitting_id, rerun.matched_fitting_id)
+        self.assertEqual(forced.matched_fitting_id, 1)
+        self.assertIsNone(rerun.matched_fitting_id)
+        self.assertEqual(rerun.evidence["selected_fit_name"], "Test Fit")
         self.assertEqual(forced.score, rerun.score)
         self.assertEqual(forced.hard_failures, rerun.hard_failures)
         self.assertEqual(forced.warnings, rerun.warnings)
@@ -212,11 +214,46 @@ class TestDoctrineMatching(unittest.TestCase):
         candidate = evaluate_contract_against_definition(contract, fit)
         result = _select_result(contract_id=42, candidates=[candidate], manual_decision=None)
 
-        self.assertEqual(result.match_status, "rejected")
+        self.assertEqual(result.match_status, "no_match")
         self.assertEqual(result.evidence["selected_fit_name"], "Test Fit")
         self.assertTrue(result.evidence.get("item_rows"))
         self.assertTrue(any(row["status"] == "error" for row in result.evidence["item_rows"]))
         self.assertTrue(any(issue["code"] == "missing_required" for issue in result.hard_failures))
+
+    def test_threshold_passing_ambiguous_match_commits_selected_candidate(self):
+        base_rules = [
+            ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
+            ItemRuleData(200, "Module", expected_quantity=1),
+        ]
+        contract = {
+            100: ContractItemData(100, "Hull", included_qty=1),
+            200: ContractItemData(200, "Module", included_qty=1),
+        }
+        first = evaluate_contract_against_definition(
+            contract,
+            _fit_definition(
+                fitting_id=1,
+                name="First Fit",
+                rules=base_rules,
+                type_info={100: TypeInfo(100, "Hull"), 200: TypeInfo(200, "Module")},
+            ),
+        )
+        second = evaluate_contract_against_definition(
+            contract,
+            _fit_definition(
+                fitting_id=2,
+                name="Second Fit",
+                rules=base_rules,
+                type_info={100: TypeInfo(100, "Hull"), 200: TypeInfo(200, "Module")},
+            ),
+        )
+
+        result = _select_result(contract_id=42, candidates=[first, second], manual_decision=None)
+
+        self.assertEqual(result.match_status, "needs_review")
+        self.assertEqual(result.matched_fitting_id, 1)
+        self.assertTrue(any(issue["code"] == "ambiguous_match" for issue in result.warnings))
+        self.assertEqual(result.evidence["selected_fit_name"], "First Fit")
 
 
 if __name__ == "__main__":
