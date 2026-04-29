@@ -135,6 +135,13 @@ def doctrine_stock_summary(
 
         contract_locations[cid] = locs
 
+    # DEBUG: Check first few contract locations
+    print(f"\n=== CONTRACT LOCATIONS DEBUG ===")
+    print(f"Built contract_locations for {len(contract_locations)} contracts")
+    for cid, locs in list(contract_locations.items())[:3]:
+        print(f"  Contract ID (pk) {cid}: locations = {locs}")
+    print("=== END ===\n")
+
     contract_pks = list(contract_qs.values_list("pk", flat=True))
     match_map = get_or_match_contracts(contract_pks, persist=True, refresh=False)
 
