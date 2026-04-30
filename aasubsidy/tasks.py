@@ -51,36 +51,121 @@ def _contract_ids_from_refresh_result(result) -> list[int]:
     return []
 
 
+def _queue_corporate_contract_item_refreshes(
+    update_contract_items_task,
+    corporation_id: int,
+    contract_ids: list[int],
+    *,
+    force_refresh: bool,
+) -> dict:
+    normalized_ids = sorted({int(contract_id) for contract_id in contract_ids if contract_id})
+    queued = 0
+    task_ids: list[str] = []
+    for contract_id in normalized_ids:
+        async_result = update_contract_items_task.apply_async(
+            args=[corporation_id, contract_id],
+            kwargs={"force_refresh": force_refresh},
+            priority=8,
+        )
+        queued += 1
+        if getattr(async_result, "id", None):
+            task_ids.append(str(async_result.id))
+
+    return {
+        "queued": queued,
+        "task_ids": task_ids,
+        "contract_ids": normalized_ids,
+    }
+
+
 def _force_refresh_corporate_contracts(corporation_id: int, *, force_refresh: bool = True) -> dict:
+    helper_import_error = None
+    try:
+        from corptools.task_helpers import corp_helpers
+    except Exception as exc:
+        corp_helpers = None
+        helper_import_error = exc
+
+    if corp_helpers is not None:
+        try:
+            result, refreshed_ids = corp_helpers.update_corporate_contracts(
+                corporation_id,
+                force_refresh=force_refresh,
+            )
+            queued_items = _queue_corporate_contract_item_refreshes(
+                corp_helpers.update_corporate_contract_items,
+                corporation_id,
+                refreshed_ids,
+                force_refresh=force_refresh,
+            )
+            logger.info(
+                "Triggered synchronous corptools contract refresh for corporation %s with force_refresh=%s (%s contracts refreshed, %s item refresh tasks queued).",
+                corporation_id,
+                force_refresh,
+                len(queued_items["contract_ids"]),
+                queued_items["queued"],
+            )
+            return {
+                "attempted": True,
+                "ok": True,
+                "contracts_refreshed": len(queued_items["contract_ids"]),
+                "contract_ids": queued_items["contract_ids"],
+                "contract_item_tasks_queued": queued_items["queued"],
+                "contract_item_task_ids": queued_items["task_ids"],
+                "force_refresh": force_refresh,
+                "mode": "helper",
+                "message": result,
+            }
+        except Exception as exc:
+            if _is_missing_corporation_audit(exc):
+                logger.info(
+                    "Skipping corptools contract refresh for corporation %s: no CorporationAudit is configured.",
+                    corporation_id,
+                )
+                return {
+                    "attempted": False,
+                    "ok": False,
+                    "skipped": True,
+                    "error": "missing_corporation_audit",
+                }
+            logger.warning(
+                "Corptools helper contract refresh failed for corporation %s: %s",
+                corporation_id,
+                exc,
+                exc_info=True,
+            )
+
     try:
         from corptools.tasks import update_corp_contracts
     except Exception as exc:
-        try:
-            from corptools.tasks.corporation.contracts import corp_contract_update as update_corp_contracts
-        except Exception as nested_exc:
-            logger.warning(
-                "Corporate contract refresh unavailable for corporation %s: %s; fallback failed: %s",
-                corporation_id,
-                exc,
-                nested_exc,
-            )
-            return {"attempted": False, "ok": False, "error": str(nested_exc)}
+        logger.warning(
+            "Corporate contract refresh unavailable for corporation %s: helper import=%s; task import=%s",
+            corporation_id,
+            helper_import_error,
+            exc,
+        )
+        return {"attempted": False, "ok": False, "error": str(exc)}
 
     try:
-        result = update_corp_contracts(corporation_id, force_refresh=force_refresh)
-        refreshed_ids = _contract_ids_from_refresh_result(result)
+        async_result = update_corp_contracts.apply_async(
+            args=[corporation_id],
+            kwargs={"force_refresh": force_refresh},
+            priority=6,
+        )
         logger.info(
-            "Triggered corptools contract refresh for corporation %s with force_refresh=%s (%s contract identifiers returned).",
+            "Queued corptools contract refresh task for corporation %s with force_refresh=%s (task_id=%s).",
             corporation_id,
             force_refresh,
-            len(refreshed_ids),
+            getattr(async_result, "id", None),
         )
         return {
             "attempted": True,
             "ok": True,
-            "contracts_refreshed": len(refreshed_ids),
-            "contract_ids": refreshed_ids,
+            "contracts_refreshed": 0,
+            "contract_ids": [],
+            "task_id": getattr(async_result, "id", None),
             "force_refresh": force_refresh,
+            "mode": "task",
         }
     except Exception as exc:
         if _is_missing_corporation_audit(exc):
