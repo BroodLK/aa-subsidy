@@ -8,7 +8,7 @@ You probably shouldn't
 ### Setup
 After installing, you should run the following command to setup the periodic tasks:
 ```bash
-python manage.py setup_aasubsidy_tasks
+python manage.py setup_subsidy
 ```
 This will schedule:
 - Price refresh (weekly)
