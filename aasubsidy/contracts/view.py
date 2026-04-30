@@ -503,7 +503,7 @@ class ReviewSummariesView(PermissionRequiredMixin, View):
 
         # Missing or stale match rows are calculated and persisted here. Current
         # saved rows are reused so repeat page loads stay fast.
-        contract_pks = [contract.pk for contract in contracts]
+        contract_pks = [int(contract.pk) for contract in contracts]
         results = get_or_match_contracts(contract_pks, persist=True, refresh=False)
 
         pricing_fit_ids = {
@@ -514,7 +514,7 @@ class ReviewSummariesView(PermissionRequiredMixin, View):
         pricing_fallback = get_fitting_pricing_map(pricing_fit_ids)
 
         rows = [
-            _serialize_review_row(contract, results.get(contract.pk), pricing_fallback)
+            _serialize_review_row(contract, results.get(int(contract.pk)), pricing_fallback)
             for contract in contracts
         ]
 

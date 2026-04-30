@@ -1499,8 +1499,9 @@ def _persist_results(results: list[MatchResultData]) -> None:
     timezone = refs["timezone"]
     now = timezone.now()
 
-    contract_ids = [result.contract_id for result in results]
-    existing = DoctrineMatchResult.objects.in_bulk(contract_ids, field_name="contract_id")
+    contract_ids = [int(result.contract_id) for result in results]
+    db_contract_ids = [str(contract_id) for contract_id in contract_ids]
+    existing = DoctrineMatchResult.objects.in_bulk(db_contract_ids, field_name="contract_id")
     to_create = []
     to_update = []
     for result in results:
@@ -1516,9 +1517,9 @@ def _persist_results(results: list[MatchResultData]) -> None:
             "evidence_json": json.dumps(evidence),
             "updated_at": now,
         }
-        current = existing.get(result.contract_id)
+        current = existing.get(str(result.contract_id))
         if current is None:
-            to_create.append(DoctrineMatchResult(contract_id=result.contract_id, **payload))
+            to_create.append(DoctrineMatchResult(contract_id=str(result.contract_id), **payload))
             continue
         for field_name, value in payload.items():
             setattr(current, field_name, value)
@@ -1580,11 +1581,12 @@ def get_or_match_contracts(
     contract_ids = [int(contract_id) for contract_id in contract_ids if contract_id]
     if not contract_ids:
         return {}
+    db_contract_ids = [str(contract_id) for contract_id in contract_ids]
 
     if refresh:
         return match_contracts(contract_ids, persist=persist)
 
-    existing_rows = DoctrineMatchResult.objects.filter(contract_id__in=contract_ids).select_related("matched_fitting")
+    existing_rows = DoctrineMatchResult.objects.filter(contract_id__in=db_contract_ids).select_related("matched_fitting")
     results: dict[int, MatchResultData] = {}
     for row in existing_rows:
         if _record_matches_current_engine(row):
@@ -1624,6 +1626,7 @@ def match_contracts(
     contract_ids = [int(contract_id) for contract_id in contract_ids if contract_id]
     if not contract_ids:
         return {}
+    db_contract_ids = [str(contract_id) for contract_id in contract_ids]
 
     cfg = SubsidyConfig.active()
     close_match_threshold = Decimal(str(cfg.close_match_threshold))
@@ -1631,12 +1634,12 @@ def match_contracts(
     if forced_fit_ids is None:
         forced_fit_ids = {
             int(row["contract_id"]): int(row["forced_fitting_id"]) if row["forced_fitting_id"] else None
-            for row in CorporateContractSubsidy.objects.filter(contract_id__in=contract_ids)
+            for row in CorporateContractSubsidy.objects.filter(contract_id__in=db_contract_ids)
             .values("contract_id", "forced_fitting_id")
         }
 
     latest_decisions: dict[int, dict[str, Any]] = {}
-    for decision in DoctrineContractDecision.objects.filter(contract_id__in=contract_ids).order_by("contract_id", "-created_at", "-id"):
+    for decision in DoctrineContractDecision.objects.filter(contract_id__in=db_contract_ids).order_by("contract_id", "-created_at", "-id"):
         if decision.contract_id in latest_decisions:
             continue
         latest_decisions[int(decision.contract_id)] = {
@@ -1648,7 +1651,7 @@ def match_contracts(
         }
 
     item_rows = list(
-        CorporateContractItem.objects.filter(contract_id__in=contract_ids)
+        CorporateContractItem.objects.filter(contract_id__in=db_contract_ids)
         .values("contract_id", "type_name_id", "type_name__name", "is_included")
         .annotate(total_qty=Sum("quantity"))
     )

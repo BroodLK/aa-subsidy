@@ -613,7 +613,7 @@ def doctrine_insights(corporation_id: int | None = None):
     sold_contracts_qs = apply_contract_exclusions(sold_contracts_qs, cfg_model)
     all_contracts += list(sold_contracts_qs)
 
-    contract_pks = [c.id for c in all_contracts]
+    contract_pks = [int(c.id) for c in all_contracts]
     match_map = get_or_match_contracts(contract_pks, persist=True)
     contract_titles = {}
     contract_fit_pk = {}
@@ -621,12 +621,12 @@ def doctrine_insights(corporation_id: int | None = None):
     fitting_name_map = {f["pk"]: f["name"] for f in Fitting.objects.values("pk", "name")}
 
     for c in all_contracts:
-        result = match_map.get(c.id)
+        result = match_map.get(int(c.id))
         if not result or result.match_status != "matched" or not result.matched_fitting_id:
             continue
-        contract_titles[c.id] = result.matched_fitting_name or fitting_name_map.get(result.matched_fitting_id, "Unknown")
-        contract_fit_pk[c.id] = int(result.matched_fitting_id)
-        valid_contract_ids.add(c.id)
+        contract_titles[int(c.id)] = result.matched_fitting_name or fitting_name_map.get(result.matched_fitting_id, "Unknown")
+        contract_fit_pk[int(c.id)] = int(result.matched_fitting_id)
+        valid_contract_ids.add(int(c.id))
 
     def get_display_issuer(c):
         char_id = getattr(c.issuer_name, "eve_id", None)
@@ -636,7 +636,7 @@ def doctrine_insights(corporation_id: int | None = None):
 
     slow_contracts = []
     for c in slow_contracts_qs:
-        if c.id not in valid_contract_ids:
+        if int(c.id) not in valid_contract_ids:
             continue
         slow_contracts.append(
             {
@@ -645,14 +645,14 @@ def doctrine_insights(corporation_id: int | None = None):
                 "location": getattr(c.start_location_name, "location_name", "Unknown"),
                 "date_issued": c.date_issued,
                 "days_outstanding": (now - c.date_issued).days,
-                "title": contract_titles.get(c.id, "No Title"),
+                "title": contract_titles.get(int(c.id), "No Title"),
                 "price": c.price,
             }
         )
 
     expired_contracts = []
     for c in expired_contracts_qs:
-        if c.id not in valid_contract_ids:
+        if int(c.id) not in valid_contract_ids:
             continue
         expired_contracts.append(
             {
@@ -660,7 +660,7 @@ def doctrine_insights(corporation_id: int | None = None):
                 "issuer": get_display_issuer(c),
                 "location": getattr(c.start_location_name, "location_name", "Unknown"),
                 "date_expired": c.date_expired,
-                "title": contract_titles.get(c.id, "No Title"),
+                "title": contract_titles.get(int(c.id), "No Title"),
                 "price": c.price,
                 "status": c.status,
             }
@@ -694,7 +694,7 @@ def doctrine_insights(corporation_id: int | None = None):
 
     fits_sold_counts = Counter()
     for c in sold_contracts_qs:
-        fid = contract_fit_pk.get(c.id)
+        fid = contract_fit_pk.get(int(c.id))
         if fid:
             fits_sold_counts[fid] += 1
 
