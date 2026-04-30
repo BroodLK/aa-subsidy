@@ -1,11 +1,6 @@
 from __future__ import annotations
 
 
-def resolve_corptools_force_refresh(force_refresh: bool | None) -> bool:
-    """Preserve the old behavior unless a caller explicitly disables it."""
-    return True if force_refresh is None else bool(force_refresh)
-
-
 def claim_clearance_completed(quantity: int | None) -> bool:
     return int(quantity or 0) > 0
 

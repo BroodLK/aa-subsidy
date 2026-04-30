@@ -3,16 +3,10 @@ import unittest
 from aasubsidy.helpers.contract_import import (
     claim_clearance_completed,
     plan_claim_clearance,
-    resolve_corptools_force_refresh,
 )
 
 
 class TestContractImportHelpers(unittest.TestCase):
-    def test_corptools_force_refresh_defaults_to_true(self):
-        self.assertTrue(resolve_corptools_force_refresh(None))
-        self.assertTrue(resolve_corptools_force_refresh(True))
-        self.assertFalse(resolve_corptools_force_refresh(False))
-
     def test_positive_clearance_marks_contract_complete(self):
         self.assertTrue(claim_clearance_completed(1))
         self.assertFalse(claim_clearance_completed(0))

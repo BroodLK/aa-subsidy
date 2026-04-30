@@ -1,23 +1,37 @@
-import requests
 from celery import shared_task
-from django.db import Error, transaction
-from django.core.exceptions import ObjectDoesNotExist
+from django.db import transaction
 from django.db.models import Q
-from allianceauth.authentication.models import CharacterOwnership
-from allianceauth.services.hooks import get_extension_logger
+from django.utils import timezone
 
+from allianceauth.authentication.models import CharacterOwnership
+from allianceauth.eveonline.models import EveCharacter
+from allianceauth.services.hooks import get_extension_logger
+from corptools.models import (
+    CorporateContract,
+    CorporateContractItem,
+    CorporationAudit,
+    EveItemType,
+    EveName,
+)
+from esi.errors import TokenError
+from esi.exceptions import HTTPClientError, HTTPNotModified
+from esi.models import Token
+from esi.openapi_clients import ESIClientProvider
+
+from . import __title__, __version__
+from .contracts.filters import apply_contract_exclusions
+from .contracts.matching import match_contracts
+from .helpers.contract_import import plan_claim_clearance
+from .helpers.services_update import update_all_prices
 from .models import SubsidyConfig, SubsidyItemPrice
 from fittings.models import Fitting
 from .models import FittingRequest
-from corptools.models import CorporateContract
 from .models import CorporateContractSubsidy, FittingClaim, FittingClaimAutoClearance
-from .contracts.filters import apply_contract_exclusions
-from .contracts.matching import match_contracts
-from .helpers.contract_import import plan_claim_clearance, resolve_corptools_force_refresh
-from .helpers.services_update import update_all_prices
-from django.utils import timezone
 
 logger = get_extension_logger(__name__)
+
+ESI_CONTRACT_SCOPE = "esi-contracts.read_corporation_contracts.v1"
+ESI_CONTRACT_ITEM_TYPES_BATCH_SIZE = 1000
 
 try:
     from eveuniverse.models import EveType, EveMarketPrice
@@ -26,87 +40,263 @@ except Exception:
     EveMarketPrice = None
 
 
-def _is_missing_corporation_audit(exc: Exception) -> bool:
-    if not isinstance(exc, ObjectDoesNotExist):
-        return False
-    exc_type = exc.__class__
-    return (
-        exc_type.__name__ == "DoesNotExist"
-        and "corptools.models.audits" in getattr(exc_type, "__module__", "")
-        and "CorporationAudit" in getattr(exc_type, "__qualname__", "")
+def _corporation_contract_queryset(corporation_id: int):
+    return CorporateContract.objects.filter(
+        corporation__corporation__corporation_id=corporation_id
     )
 
 
-def _contract_ids_from_refresh_result(result) -> list[int]:
-    if isinstance(result, dict):
-        for key in ("contract_ids", "contracts", "refreshed_contract_ids"):
-            values = result.get(key)
-            if values:
-                return [int(value) for value in values if value]
-        return []
-    if isinstance(result, tuple) and len(result) > 1 and result[1]:
-        return [int(value) for value in result[1] if value]
-    if isinstance(result, list):
-        return [int(value) for value in result if value]
-    return []
+def _esi_contract_client():
+    return ESIClientProvider(
+        compatibility_date=timezone.now().date(),
+        ua_appname=__title__,
+        ua_version=__version__,
+        tags=["Contracts"],
+    ).client
 
 
-def _queue_corporate_contract_item_refreshes(
-    update_contract_items_task,
+def _esi_value(payload, field: str, default=None):
+    if isinstance(payload, dict):
+        return payload.get(field, default)
+    return getattr(payload, field, default)
+
+
+def _normalize_int(value, default: int | None = None) -> int | None:
+    if value in (None, ""):
+        return default
+    return int(value)
+
+
+def _unique_positive_ids(values) -> list[int]:
+    return sorted({int(value) for value in values if value})
+
+
+def _get_corporation_audit(corporation_id: int) -> CorporationAudit:
+    return CorporationAudit.objects.select_related("corporation").get(
+        corporation__corporation_id=corporation_id
+    )
+
+
+def _get_corporation_contract_tokens(corporation_id: int) -> list[Token]:
+    character_ids = EveCharacter.objects.filter(
+        corporation_id=corporation_id
+    ).values_list("character_id", flat=True)
+    return list(
+        Token.objects.filter(character_id__in=character_ids)
+        .require_scopes([ESI_CONTRACT_SCOPE])
+        .order_by("-created")
+    )
+
+
+def _fetch_corporation_contracts_from_esi(
     corporation_id: int,
-    contract_ids: list[int],
     *,
     force_refresh: bool,
-) -> dict:
-    normalized_ids = sorted({int(contract_id) for contract_id in contract_ids if contract_id})
-    queued = 0
-    task_ids: list[str] = []
-    for contract_id in normalized_ids:
-        async_result = update_contract_items_task.apply_async(
-            args=[corporation_id, contract_id],
-            kwargs={"force_refresh": force_refresh},
-            priority=8,
+) -> tuple[list, Token]:
+    client = _esi_contract_client()
+    tokens = _get_corporation_contract_tokens(corporation_id)
+    if not tokens:
+        raise RuntimeError(
+            f"No ESI token with scope {ESI_CONTRACT_SCOPE} is available for corporation {corporation_id}."
         )
-        queued += 1
-        if getattr(async_result, "id", None):
-            task_ids.append(str(async_result.id))
+
+    last_error: Exception | None = None
+    for token in tokens:
+        try:
+            contracts = client.Contracts.GetCorporationsCorporationIdContracts(
+                corporation_id=corporation_id,
+                token=token,
+            ).results(force_refresh=force_refresh)
+            return list(contracts), token
+        except HTTPClientError as exc:
+            if getattr(exc, "status_code", None) in {401, 403}:
+                last_error = exc
+                continue
+            raise
+        except TokenError as exc:
+            last_error = exc
+            continue
+
+    raise last_error or RuntimeError(
+        f"Unable to authenticate a corporation contract token for corporation {corporation_id}."
+    )
+
+
+def _fetch_contract_items_from_esi(
+    corporation_id: int,
+    contract_id: int,
+    *,
+    token: Token,
+    force_refresh: bool,
+) -> tuple[list, Token]:
+    client = _esi_contract_client()
+    tokens = [token]
+    tokens.extend(
+        candidate
+        for candidate in _get_corporation_contract_tokens(corporation_id)
+        if candidate.pk != token.pk
+    )
+
+    last_error: Exception | None = None
+    for candidate in tokens:
+        try:
+            items = client.Contracts.GetCorporationsCorporationIdContractsContractIdItems(
+                corporation_id=corporation_id,
+                contract_id=contract_id,
+                token=candidate,
+            ).results(force_refresh=force_refresh)
+            return list(items), candidate
+        except HTTPClientError as exc:
+            if getattr(exc, "status_code", None) == 404:
+                raise
+            if getattr(exc, "status_code", None) in {401, 403}:
+                last_error = exc
+                continue
+            raise
+        except TokenError as exc:
+            last_error = exc
+            continue
+
+    raise last_error or RuntimeError(
+        f"Unable to authenticate a corporation contract-item token for corporation {corporation_id}."
+    )
+
+
+def _sync_corporate_contract_items_via_esi(
+    *,
+    corporation_id: int,
+    contracts_by_id: dict[int, CorporateContract],
+    token: Token,
+    existing_item_contract_ids: set[int],
+    force_refresh: bool,
+) -> dict:
+    items_synced = 0
+    contracts_with_items = 0
+    contracts_without_items = 0
+    reused_existing_items = 0
+    matchable_contract_ids: set[int] = set()
+    failures: list[dict[str, object]] = []
+    active_token = token
+
+    for contract_id, contract in contracts_by_id.items():
+        if str(contract.status).lower() == "deleted":
+            continue
+
+        try:
+            items, active_token = _fetch_contract_items_from_esi(
+                corporation_id,
+                contract_id,
+                token=active_token,
+                force_refresh=force_refresh,
+            )
+        except HTTPClientError as exc:
+            if getattr(exc, "status_code", None) == 404:
+                if contract_id in existing_item_contract_ids:
+                    reused_existing_items += 1
+                    matchable_contract_ids.add(contract_id)
+                else:
+                    contracts_without_items += 1
+                failures.append(
+                    {
+                        "contract_id": contract_id,
+                        "status_code": 404,
+                        "error": "contract_items_not_ready",
+                    }
+                )
+                logger.info(
+                    "Corporate contract items are not yet available from ESI for corporation %s contract %s.",
+                    corporation_id,
+                    contract_id,
+                )
+                continue
+
+            if contract_id in existing_item_contract_ids:
+                reused_existing_items += 1
+                matchable_contract_ids.add(contract_id)
+            failures.append(
+                {
+                    "contract_id": contract_id,
+                    "status_code": getattr(exc, "status_code", None),
+                    "error": str(exc),
+                }
+            )
+            logger.warning(
+                "Failed to sync contract items from ESI for corporation %s contract %s: %s",
+                corporation_id,
+                contract_id,
+                exc,
+                exc_info=True,
+            )
+            continue
+        except Exception as exc:
+            if contract_id in existing_item_contract_ids:
+                reused_existing_items += 1
+                matchable_contract_ids.add(contract_id)
+            failures.append({"contract_id": contract_id, "error": str(exc)})
+            logger.warning(
+                "Failed to sync contract items from ESI for corporation %s contract %s: %s",
+                corporation_id,
+                contract_id,
+                exc,
+                exc_info=True,
+            )
+            continue
+
+        type_ids = _unique_positive_ids(_esi_value(item, "type_id") for item in items)
+        if type_ids:
+            EveItemType.objects.create_bulk_from_esi(type_ids)
+
+        new_items: list[CorporateContractItem] = []
+        for item in items:
+            record_id = _normalize_int(_esi_value(item, "record_id"))
+            type_id = _normalize_int(_esi_value(item, "type_id"))
+            if not record_id or not type_id:
+                continue
+            new_items.append(
+                CorporateContractItem(
+                    contract_id=contract.id,
+                    is_included=bool(_esi_value(item, "is_included", False)),
+                    is_singleton=bool(_esi_value(item, "is_singleton", False)),
+                    quantity=int(_esi_value(item, "quantity", 0) or 0),
+                    raw_quantity=_normalize_int(_esi_value(item, "raw_quantity")),
+                    record_id=record_id,
+                    type_name_id=type_id,
+                )
+            )
+
+        with transaction.atomic():
+            CorporateContractItem.objects.filter(contract_id=contract.id).delete()
+            if new_items:
+                CorporateContractItem.objects.bulk_create(
+                    new_items,
+                    batch_size=ESI_CONTRACT_ITEM_TYPES_BATCH_SIZE,
+                )
+
+        if new_items:
+            items_synced += len(new_items)
+            contracts_with_items += 1
+            matchable_contract_ids.add(contract_id)
+            existing_item_contract_ids.add(contract_id)
+        else:
+            contracts_without_items += 1
+            existing_item_contract_ids.discard(contract_id)
 
     return {
-        "queued": queued,
-        "task_ids": task_ids,
-        "contract_ids": normalized_ids,
-        "task_name": getattr(update_contract_items_task, "name", None),
+        "items_synced": items_synced,
+        "contracts_with_items": contracts_with_items,
+        "contracts_without_items": contracts_without_items,
+        "contracts_reused_existing_items": reused_existing_items,
+        "contract_ids": sorted(matchable_contract_ids),
+        "failures": failures,
     }
 
 
-def _has_corporation_audit(corporation_id: int) -> bool | None:
+def _sync_corporate_contracts_via_esi(corporation_id: int, *, force_refresh: bool = True) -> dict:
     try:
-        from corptools.models import CorporationAudit
-    except Exception:
-        return None
-    return CorporationAudit.objects.filter(
-        corporation__corporation_id=corporation_id
-    ).exists()
-
-
-def _fallback_contract_ids_missing_items(corporation_id: int) -> list[int]:
-    return sorted({
-        int(contract_id)
-        for contract_id in CorporateContract.objects.filter(
-            corporation__corporation__corporation_id=corporation_id,
-            corporatecontractitem__isnull=True,
-        )
-        .exclude(status__iexact="deleted")
-        .values_list("contract_id", flat=True)
-        if contract_id
-    })
-
-
-def _force_refresh_corporate_contracts(corporation_id: int, *, force_refresh: bool = True) -> dict:
-    audit_exists = _has_corporation_audit(corporation_id)
-    if audit_exists is False:
+        audit_corp = _get_corporation_audit(corporation_id)
+    except CorporationAudit.DoesNotExist:
         logger.warning(
-            "Skipping corptools contract refresh for corporation %s: no matching CorporationAudit row exists.",
+            "Skipping direct ESI contract sync for corporation %s: no matching CorporationAudit row exists.",
             corporation_id,
         )
         return {
@@ -117,124 +307,209 @@ def _force_refresh_corporate_contracts(corporation_id: int, *, force_refresh: bo
             "corporation_id": corporation_id,
         }
 
-    helper_import_error = None
     try:
-        from corptools.task_helpers import corp_helpers
-    except Exception as exc:
-        corp_helpers = None
-        helper_import_error = exc
-
-    if corp_helpers is not None:
-        try:
-            result, refreshed_ids = corp_helpers.update_corporate_contracts(
-                corporation_id,
-                force_refresh=force_refresh,
-            )
-            if force_refresh and not refreshed_ids:
-                refreshed_ids = _fallback_contract_ids_missing_items(corporation_id)
-                if refreshed_ids:
-                    logger.warning(
-                        "Corptools helper refresh returned no contract IDs for corporation %s; falling back to %s contracts missing items.",
-                        corporation_id,
-                        len(refreshed_ids),
-                    )
-            queued_items = _queue_corporate_contract_item_refreshes(
-                corp_helpers.update_corporate_contract_items,
-                corporation_id,
-                refreshed_ids,
-                force_refresh=force_refresh,
-            )
-            logger.info(
-                "Triggered synchronous corptools contract refresh for corporation %s with force_refresh=%s (%s contracts refreshed, %s item refresh tasks queued).",
-                corporation_id,
-                force_refresh,
-                len(queued_items["contract_ids"]),
-                queued_items["queued"],
-            )
-            return {
-                "attempted": True,
-                "ok": True,
-                "contracts_refreshed": len(queued_items["contract_ids"]),
-                "contract_ids": queued_items["contract_ids"],
-                "contract_item_tasks_queued": queued_items["queued"],
-                "contract_item_task_ids": queued_items["task_ids"],
-                "contract_item_task_name": queued_items["task_name"],
-                "force_refresh": force_refresh,
-                "mode": "helper",
-                "message": result,
-            }
-        except Exception as exc:
-            if _is_missing_corporation_audit(exc):
-                logger.info(
-                    "Skipping corptools contract refresh for corporation %s: no CorporationAudit is configured.",
-                    corporation_id,
-                )
-                return {
-                    "attempted": False,
-                    "ok": False,
-                    "skipped": True,
-                    "error": "missing_corporation_audit",
-                    "corporation_id": corporation_id,
-                }
-            logger.warning(
-                "Corptools helper contract refresh failed for corporation %s: %s",
-                corporation_id,
-                exc,
-                exc_info=True,
-            )
-
-    try:
-        from corptools.tasks import update_corp_contracts
-    except Exception as exc:
-        logger.warning(
-            "Corporate contract refresh unavailable for corporation %s: helper import=%s; task import=%s",
+        contracts, token = _fetch_corporation_contracts_from_esi(
             corporation_id,
-            helper_import_error,
-            exc,
+            force_refresh=force_refresh,
         )
-        return {"attempted": False, "ok": False, "error": str(exc)}
-
-    try:
-        async_result = update_corp_contracts.apply_async(
-            args=[corporation_id],
-            kwargs={"force_refresh": force_refresh},
-            priority=6,
-        )
+    except HTTPNotModified:
         logger.info(
-            "Queued corptools contract refresh task for corporation %s with force_refresh=%s (task_id=%s).",
+            "Corporate contracts were unchanged for corporation %s.",
             corporation_id,
-            force_refresh,
-            getattr(async_result, "id", None),
         )
         return {
             "attempted": True,
             "ok": True,
             "contracts_refreshed": 0,
             "contract_ids": [],
-            "task_id": getattr(async_result, "id", None),
-            "force_refresh": force_refresh,
-            "mode": "task",
+            "all_contract_ids": [],
+            "items_synced": 0,
+            "contracts_with_items": 0,
+            "contracts_without_items": 0,
+            "contracts_reused_existing_items": 0,
+            "item_failures": [],
+            "mode": "django_esi",
+            "not_modified": True,
         }
     except Exception as exc:
-        if _is_missing_corporation_audit(exc):
-            logger.info(
-                "Skipping corptools contract refresh for corporation %s: no CorporationAudit is configured.",
-                corporation_id,
-            )
-            return {
-                "attempted": False,
-                "ok": False,
-                "skipped": True,
-                "error": "missing_corporation_audit",
-                "corporation_id": corporation_id,
-            }
         logger.warning(
-            "Corptools contract refresh failed for corporation %s: %s",
+            "Direct ESI contract sync failed for corporation %s: %s",
             corporation_id,
             exc,
             exc_info=True,
         )
-        return {"attempted": True, "ok": False, "error": str(exc)}
+        return {
+            "attempted": True,
+            "ok": False,
+            "error": str(exc),
+            "corporation_id": corporation_id,
+            "mode": "django_esi",
+        }
+
+    eve_name_ids = _unique_positive_ids(
+        value
+        for contract in contracts
+        for value in (
+            _esi_value(contract, "acceptor_id"),
+            _esi_value(contract, "assignee_id"),
+            _esi_value(contract, "issuer_id"),
+            _esi_value(contract, "issuer_corporation_id"),
+        )
+    )
+    if eve_name_ids:
+        EveName.objects.create_bulk_from_esi(eve_name_ids)
+
+    existing_contract_ids = set(
+        CorporateContract.objects.filter(corporation=audit_corp).values_list("contract_id", flat=True)
+    )
+    existing_item_contract_ids = set(
+        CorporateContractItem.objects.filter(contract__corporation=audit_corp)
+        .values_list("contract__contract_id", flat=True)
+        .distinct()
+    )
+
+    contracts_to_create: list[CorporateContract] = []
+    contracts_to_update: list[CorporateContract] = []
+    contracts_by_id: dict[int, CorporateContract] = {}
+    deleted_contract_pks: list[str] = []
+
+    for payload in contracts:
+        contract_id = _normalize_int(_esi_value(payload, "contract_id"))
+        if not contract_id:
+            continue
+
+        contract = CorporateContract(
+            id=CorporateContract.build_pk(audit_corp.id, contract_id),
+            corporation=audit_corp,
+            contract_id=contract_id,
+            acceptor_id=_normalize_int(_esi_value(payload, "acceptor_id")),
+            acceptor_name_id=_normalize_int(_esi_value(payload, "acceptor_id")),
+            assignee_id=_normalize_int(_esi_value(payload, "assignee_id")),
+            assignee_name_id=_normalize_int(_esi_value(payload, "assignee_id")),
+            issuer_id=_normalize_int(_esi_value(payload, "issuer_id")),
+            issuer_name_id=_normalize_int(_esi_value(payload, "issuer_id")),
+            issuer_corporation_id=_normalize_int(_esi_value(payload, "issuer_corporation_id")),
+            issuer_corporation_name_id=_normalize_int(_esi_value(payload, "issuer_corporation_id")),
+            availability=str(_esi_value(payload, "availability", "") or ""),
+            buyout=_esi_value(payload, "buyout"),
+            collateral=_esi_value(payload, "collateral"),
+            date_accepted=_esi_value(payload, "date_accepted"),
+            date_completed=_esi_value(payload, "date_completed"),
+            date_expired=_esi_value(payload, "date_expired"),
+            date_issued=_esi_value(payload, "date_issued"),
+            days_to_complete=_normalize_int(_esi_value(payload, "days_to_complete")),
+            end_location_id=_normalize_int(_esi_value(payload, "end_location_id")),
+            for_corporation=bool(_esi_value(payload, "for_corporation", False)),
+            price=_esi_value(payload, "price"),
+            reward=_esi_value(payload, "reward"),
+            start_location_id=_normalize_int(_esi_value(payload, "start_location_id")),
+            status=str(_esi_value(payload, "status", "") or ""),
+            title=str(_esi_value(payload, "title", "") or ""),
+            contract_type=str(_esi_value(payload, "type", "") or ""),
+            volume=_esi_value(payload, "volume"),
+        )
+        contracts_by_id[contract_id] = contract
+
+        if contract_id in existing_contract_ids:
+            contracts_to_update.append(contract)
+        else:
+            contracts_to_create.append(contract)
+
+        if contract.status.lower() == "deleted":
+            deleted_contract_pks.append(contract.id)
+
+    if contracts_to_create:
+        CorporateContract.objects.bulk_create(
+            contracts_to_create,
+            batch_size=1000,
+            ignore_conflicts=True,
+        )
+
+    if contracts_to_update:
+        CorporateContract.objects.bulk_update(
+            contracts_to_update,
+            fields=[
+                "acceptor_id",
+                "acceptor_name_id",
+                "assignee_id",
+                "assignee_name_id",
+                "issuer_id",
+                "issuer_name_id",
+                "issuer_corporation_id",
+                "issuer_corporation_name_id",
+                "availability",
+                "buyout",
+                "collateral",
+                "date_accepted",
+                "date_completed",
+                "date_expired",
+                "date_issued",
+                "days_to_complete",
+                "end_location_id",
+                "for_corporation",
+                "price",
+                "reward",
+                "start_location_id",
+                "status",
+                "title",
+                "contract_type",
+                "volume",
+            ],
+            batch_size=1000,
+        )
+
+    if deleted_contract_pks:
+        CorporateContractItem.objects.filter(contract_id__in=deleted_contract_pks).delete()
+
+    item_result = _sync_corporate_contract_items_via_esi(
+        corporation_id=corporation_id,
+        contracts_by_id=contracts_by_id,
+        token=token,
+        existing_item_contract_ids=existing_item_contract_ids,
+        force_refresh=force_refresh,
+    )
+
+    audit_corp.last_update_contracts = timezone.now()
+    audit_corp.save(update_fields=["last_update_contracts"])
+
+    logger.info(
+        "Direct ESI contract sync completed for corporation %s: %s contracts, %s contracts with items, %s item rows, %s item failures.",
+        corporation_id,
+        len(contracts_by_id),
+        item_result["contracts_with_items"],
+        item_result["items_synced"],
+        len(item_result["failures"]),
+    )
+
+    return {
+        "attempted": True,
+        "ok": True,
+        "contracts_refreshed": len(contracts_by_id),
+        "contract_ids": item_result["contract_ids"],
+        "all_contract_ids": sorted(contracts_by_id.keys()),
+        "items_synced": item_result["items_synced"],
+        "contracts_with_items": item_result["contracts_with_items"],
+        "contracts_without_items": item_result["contracts_without_items"],
+        "contracts_reused_existing_items": item_result["contracts_reused_existing_items"],
+        "item_failures": item_result["failures"],
+        "mode": "django_esi",
+        "force_refresh": force_refresh,
+        "token_character_id": getattr(token, "character_id", None),
+    }
+
+
+@shared_task(bind=True)
+def sync_corporate_contracts_from_esi(
+    self,
+    corporation_id: int | None = None,
+    force_refresh: bool = True,
+) -> dict:
+    if corporation_id is None:
+        corporation_id = SubsidyConfig.active().corporation_id
+    return _sync_corporate_contracts_via_esi(
+        corporation_id,
+        force_refresh=force_refresh,
+    )
 
 
 def _resolve_corporate_contract_pks(corporation_id: int, identifiers: list[int] | None = None) -> list[int]:
@@ -242,9 +517,7 @@ def _resolve_corporate_contract_pks(corporation_id: int, identifiers: list[int] 
     if not raw_ids:
         return []
 
-    rows = CorporateContract.objects.filter(
-        corporation_id=corporation_id,
-    ).filter(
+    rows = _corporation_contract_queryset(corporation_id).filter(
         Q(pk__in=raw_ids) | Q(contract_id__in=raw_ids)
     ).values_list("id", flat=True)
     return sorted({int(contract_pk) for contract_pk in rows})
@@ -359,23 +632,22 @@ def _match_imported_contracts(
     target_contract_pks = set(created_pk_set)
     target_contract_pks.update(refreshed_pk_set)
 
-    unresolved_contracts = CorporateContract.objects.filter(
-        corporation_id=corporation_id,
+    unresolved_contracts = _corporation_contract_queryset(corporation_id).filter(
         aasubsidy_meta__isnull=False,
         doctrine_match__isnull=True,
     ).values_list("id", flat=True)
     target_contract_pks.update(int(contract_pk) for contract_pk in unresolved_contracts)
 
     cfg = SubsidyConfig.active()
-    filtered_contract_pks = list(
-        apply_contract_exclusions(
-            CorporateContract.objects.filter(
-                corporation_id=corporation_id,
+    filtered_contract_pks = [
+        int(contract_pk)
+        for contract_pk in apply_contract_exclusions(
+            _corporation_contract_queryset(corporation_id).filter(
                 pk__in=target_contract_pks,
             ),
             cfg,
         ).values_list("id", flat=True)
-    )
+    ]
 
     if not filtered_contract_pks:
         return {
@@ -442,13 +714,18 @@ def import_corporate_contract_reviews(
 
     refresh_result = {"attempted": False, "ok": False}
     if force_refresh_contracts:
-        effective_force_refresh = resolve_corptools_force_refresh(corptools_force_refresh)
-        refresh_result = _force_refresh_corporate_contracts(
+        if corptools_force_refresh is not None:
+            logger.info(
+                "Ignoring deprecated corptools_force_refresh=%s for corporation %s; using direct django-esi sync.",
+                corptools_force_refresh,
+                corporation_id,
+            )
+        refresh_result = _sync_corporate_contracts_via_esi(
             corporation_id,
-            force_refresh=effective_force_refresh,
+            force_refresh=True,
         )
 
-    qs = CorporateContract.objects.filter(corporation_id=corporation_id).only("id")
+    qs = _corporation_contract_queryset(corporation_id).only("id")
 
     created = 0
     created_contract_pks: list[int] = []
