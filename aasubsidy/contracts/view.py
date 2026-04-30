@@ -38,6 +38,7 @@ from ..models import (
     SubsidyConfig,
     UserTablePreference,
 )
+from ..tasks import _effective_corporation_id, _sync_single_corporate_contract_item_via_esi
 from .payments import aggregate_payments_to_main, mark_all_unpaid_for_main_as_paid
 
 
@@ -164,6 +165,13 @@ def _build_stats_payload(contracts_qs, aggregate_to_main: bool = False):
     )
 
     return per_character, per_character_totals, rows
+
+
+def _contract_queryset_for_corporation(corporation_id: int | None):
+    corporation_id = _effective_corporation_id(corporation_id)
+    return CorporateContract.objects.filter(
+        corporation__corporation__corporation_id=corporation_id
+    )
 
 
 def get_main_for_character(character: EveCharacter):
@@ -361,9 +369,9 @@ class UserStatsView(LoginRequiredMixin, PermissionRequiredMixin, TemplateView):
         char_eve_ids = _all_character_ids_for_user(self.request.user)
         cfg = SubsidyConfig.active()
         contracts_qs = (
-            CorporateContract.objects.filter(
-                issuer_name__eve_id__in=char_eve_ids,
-                corporation_id=cfg.corporation_id)
+            _contract_queryset_for_corporation(cfg.corporation_id).filter(
+                issuer_name__eve_id__in=char_eve_ids
+            )
             .select_related("issuer_name", "start_location_name", "aasubsidy_meta")
             .order_by("-date_issued")
         )
@@ -385,7 +393,7 @@ class GlobalStatsView(LoginRequiredMixin, PermissionRequiredMixin, TemplateView)
         ctx = super().get_context_data(**kwargs)
         cfg = SubsidyConfig.active()
         contracts_qs = (
-            CorporateContract.objects.filter(corporation_id=cfg.corporation_id)
+            _contract_queryset_for_corporation(cfg.corporation_id)
             .select_related("issuer_name", "start_location_name", "aasubsidy_meta")
             .order_by("-date_issued")
         )
@@ -484,11 +492,9 @@ class ReviewSummariesView(PermissionRequiredMixin, View):
             return JsonResponse({"ok": True, "rows": []})
 
         cfg = SubsidyConfig.active()
-        contracts_query = CorporateContract.objects.filter(
+        contracts_query = _contract_queryset_for_corporation(cfg.corporation_id).filter(
             contract_id__in=public_contract_ids
         )
-        if cfg.corporation_id:
-            contracts_query = contracts_query.filter(corporation_id=cfg.corporation_id)
 
         contracts = list(
             contracts_query.select_related("aasubsidy_meta__forced_fitting")
@@ -524,9 +530,9 @@ class ApproveView(PermissionRequiredMixin, View):
         cfg = SubsidyConfig.active()
         try:
             cc = (
-                CorporateContract.objects.select_for_update()
+                _contract_queryset_for_corporation(cfg.corporation_id).select_for_update()
                 .only("id", "contract_id")
-                .get(contract_id=contract_id, corporation_id=cfg.corporation_id)
+                .get(contract_id=contract_id)
             )
         except CorporateContract.DoesNotExist:
             messages.error(request, "Contract not found.")
@@ -575,9 +581,9 @@ class DenyView(PermissionRequiredMixin, View):
         cfg = SubsidyConfig.active()
         try:
             cc = (
-                CorporateContract.objects.select_for_update()
+                _contract_queryset_for_corporation(cfg.corporation_id).select_for_update()
                 .only("id", "contract_id")
-                .get(contract_id=contract_id, corporation_id=cfg.corporation_id)
+                .get(contract_id=contract_id)
             )
         except CorporateContract.DoesNotExist:
             messages.error(request, "Contract not found.")
@@ -715,9 +721,9 @@ class ForceFitView(PermissionRequiredMixin, View):
         fit_id_raw = request.POST.get("fit_id", "").strip()
         cfg = SubsidyConfig.active()
         try:
-            cc = CorporateContract.objects.select_for_update().only("id", "contract_id").get(
-                contract_id=contract_id, corporation_id=cfg.corporation_id
-            )
+            cc = _contract_queryset_for_corporation(cfg.corporation_id).select_for_update().only(
+                "id", "contract_id"
+            ).get(contract_id=contract_id)
         except CorporateContract.DoesNotExist:
             return JsonResponse({"ok": False, "error": "not_found"}, status=404)
 
@@ -761,10 +767,9 @@ class MatchPreviewView(PermissionRequiredMixin, View):
     def get(self, request, contract_id: int):
         cfg = SubsidyConfig.active()
         try:
-            cc = CorporateContract.objects.only("id", "contract_id").get(
-                contract_id=contract_id,
-                corporation_id=cfg.corporation_id,
-            )
+            cc = _contract_queryset_for_corporation(cfg.corporation_id).only(
+                "id", "contract_id"
+            ).get(contract_id=contract_id)
         except CorporateContract.DoesNotExist:
             return JsonResponse({"ok": False, "error": "not_found"}, status=404)
 
@@ -781,10 +786,9 @@ class AcceptOnceView(PermissionRequiredMixin, View):
     def post(self, request, contract_id: int):
         cfg = SubsidyConfig.active()
         try:
-            cc = CorporateContract.objects.select_for_update().only("id", "contract_id").get(
-                contract_id=contract_id,
-                corporation_id=cfg.corporation_id,
-            )
+            cc = _contract_queryset_for_corporation(cfg.corporation_id).select_for_update().only(
+                "id", "contract_id"
+            ).get(contract_id=contract_id)
         except CorporateContract.DoesNotExist:
             return JsonResponse({"ok": False, "error": "not_found"}, status=404)
 
@@ -821,10 +825,9 @@ class UndoAcceptOnceView(PermissionRequiredMixin, View):
     def post(self, request, contract_id: int):
         cfg = SubsidyConfig.active()
         try:
-            cc = CorporateContract.objects.select_for_update().only("id", "contract_id").get(
-                contract_id=contract_id,
-                corporation_id=cfg.corporation_id,
-            )
+            cc = _contract_queryset_for_corporation(cfg.corporation_id).select_for_update().only(
+                "id", "contract_id"
+            ).get(contract_id=contract_id)
         except CorporateContract.DoesNotExist:
             return JsonResponse({"ok": False, "error": "not_found"}, status=404)
 
@@ -850,10 +853,9 @@ class CreateRuleView(PermissionRequiredMixin, View):
     def post(self, request, contract_id: int):
         cfg = SubsidyConfig.active()
         try:
-            cc = CorporateContract.objects.select_for_update().only("id", "contract_id").get(
-                contract_id=contract_id,
-                corporation_id=cfg.corporation_id,
-            )
+            cc = _contract_queryset_for_corporation(cfg.corporation_id).select_for_update().only(
+                "id", "contract_id"
+            ).get(contract_id=contract_id)
         except CorporateContract.DoesNotExist:
             return JsonResponse({"ok": False, "error": "not_found"}, status=404)
 
@@ -978,9 +980,10 @@ class ContractItemsView(PermissionRequiredMixin, View):
     def get(self, request, contract_id: int):
         cfg = SubsidyConfig.active()
         try:
-            cc = CorporateContract.objects.select_related("aasubsidy_meta__forced_fitting").get(
-                contract_id=contract_id, corporation_id=cfg.corporation_id
-            )
+            cc = _contract_queryset_for_corporation(cfg.corporation_id).select_related(
+                "aasubsidy_meta__forced_fitting",
+                "corporation__corporation",
+            ).get(contract_id=contract_id)
         except CorporateContract.DoesNotExist:
             return JsonResponse({"ok": False, "error": "not_found"}, status=404)
 
@@ -1000,6 +1003,30 @@ class ContractItemsView(PermissionRequiredMixin, View):
                 rendered["is_included"] = None
             rendered["qty"] = int(rendered.get("qty") or 0)
             items.append(rendered)
+
+        if not items:
+            try:
+                _sync_single_corporate_contract_item_via_esi(
+                    corporation_id=cc.corporation.corporation.corporation_id,
+                    contract=cc,
+                    force_refresh=True,
+                )
+                result = get_or_match_contract(cc.pk, persist=True, refresh=True)
+                analysis = _serialize_match_result(result, include_items=True)
+                for row in analysis.get("items", []):
+                    rendered = dict(row)
+                    included_qty = int(rendered.get("included_qty") or 0)
+                    excluded_qty = int(rendered.get("excluded_qty") or 0)
+                    if included_qty > 0:
+                        rendered["is_included"] = True
+                    elif excluded_qty > 0:
+                        rendered["is_included"] = False
+                    else:
+                        rendered["is_included"] = None
+                    rendered["qty"] = int(rendered.get("qty") or 0)
+                    items.append(rendered)
+            except Exception:
+                pass
 
         if not items:
             raw_items = (

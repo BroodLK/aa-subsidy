@@ -1,8 +1,6 @@
 from datetime import datetime
 from typing import Iterable
 
-from django.db.models import F
-
 from allianceauth.eveonline.models import EveCharacter
 from eveuniverse.models import EveEntity
 from corptools.models import CorporateContract
@@ -11,6 +9,7 @@ from .filters import apply_contract_exclusions
 from .matching import get_or_match_contracts
 from .pricing import get_active_pricing_config, get_fitting_pricing_map
 from ..models import CorporateContractSubsidy, SubsidyConfig
+from ..tasks import _effective_corporation_id
 
 
 def _bulk_display_issuer_names(entity_names: Iterable[str]) -> dict[str, str]:
@@ -53,6 +52,7 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
     cfg = get_active_pricing_config()
     if corporation_id is None:
         corporation_id = cfg.get("corporation_id")
+    corporation_id = _effective_corporation_id(corporation_id)
 
     base_subsidies = CorporateContractSubsidy.objects.select_related(
         "contract__issuer_name",
@@ -64,12 +64,17 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
         contract__date_issued__lte=end,
     )
     if corporation_id is not None:
-        base_subsidies = base_subsidies.filter(contract__corporation_id=corporation_id)
+        base_subsidies = base_subsidies.filter(
+            contract__corporation__corporation__corporation_id=corporation_id
+        )
 
     base_contracts = CorporateContract.objects.filter(
         pk__in=base_subsidies.values("contract_id"),
-        corporation_id=corporation_id if corporation_id is not None else F("corporation_id"),
     )
+    if corporation_id is not None:
+        base_contracts = base_contracts.filter(
+            corporation__corporation__corporation_id=corporation_id
+        )
     base_contracts = apply_contract_exclusions(base_contracts, cfg_model)
 
     contracts = list(

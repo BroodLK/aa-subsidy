@@ -13,6 +13,7 @@ from corptools.models import CorporateContract
 from aasubsidy.contracts.filters import apply_contract_exclusions
 from aasubsidy.contracts.matching import match_contracts
 from aasubsidy.models import SubsidyConfig
+from aasubsidy.tasks import _effective_corporation_id
 
 
 class Command(BaseCommand):
@@ -108,7 +109,10 @@ class Command(BaseCommand):
             raise CommandError("--contract-id-start cannot be greater than --contract-id-end.")
 
         cfg = SubsidyConfig.active()
-        qs = CorporateContract.objects.filter(corporation_id=corporation_id).order_by("id")
+        corporation_id = _effective_corporation_id(corporation_id)
+        qs = CorporateContract.objects.filter(
+            corporation__corporation__corporation_id=corporation_id
+        ).order_by("id")
         qs = apply_contract_exclusions(qs, cfg)
         if date_from is not None:
             qs = qs.filter(date_issued__gte=date_from)

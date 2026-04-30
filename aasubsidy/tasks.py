@@ -51,6 +51,12 @@ def _corporation_contract_queryset(corporation_id: int):
     )
 
 
+def _exclude_review_locked_contracts(queryset):
+    return queryset.exclude(
+        Q(aasubsidy_meta__paid=True) | Q(aasubsidy_meta__review_status__in=[-1, 1])
+    )
+
+
 @lru_cache(maxsize=1)
 def _esi_contract_client():
     return ESIClientProvider(
@@ -85,6 +91,13 @@ def _normalize_int(value, default: int | None = None) -> int | None:
 
 def _unique_positive_ids(values) -> list[int]:
     return sorted({int(value) for value in values if value})
+
+
+def _effective_corporation_id(corporation_id: int | None) -> int:
+    normalized = _normalize_int(corporation_id, default=DEFAULT_SUBSIDY_CORPORATION_ID)
+    if normalized in (None, 0, 1):
+        return DEFAULT_SUBSIDY_CORPORATION_ID
+    return int(normalized)
 
 
 def _placeholder_eve_item_type(type_id: int) -> EveItemType:
@@ -416,6 +429,89 @@ def _sync_corporate_contract_items_via_esi(
     }
 
 
+def _sync_single_corporate_contract_item_via_esi(
+    *,
+    corporation_id: int,
+    contract: CorporateContract,
+    force_refresh: bool = True,
+) -> dict:
+    corporation_id = _effective_corporation_id(corporation_id)
+    if str(contract.status).lower() == "deleted":
+        return {
+            "contract_id": int(contract.contract_id),
+            "items_synced": 0,
+            "contracts_with_items": 0,
+            "contracts_without_items": 0,
+            "contracts_reused_existing_items": 0,
+            "error": "deleted",
+        }
+
+    existing_items_exist = CorporateContractItem.objects.filter(contract_id=contract.id).exists()
+    tokens = _get_corporation_contract_tokens(corporation_id)
+    if not tokens:
+        raise RuntimeError(
+            f"No ESI token with scope {ESI_CONTRACT_SCOPE} is available for corporation {corporation_id}."
+        )
+
+    try:
+        items, _token = _fetch_contract_items_from_esi(
+            corporation_id,
+            int(contract.contract_id),
+            token=tokens[0],
+            force_refresh=force_refresh,
+        )
+    except HTTPClientError as exc:
+        if getattr(exc, "status_code", None) == 404:
+            return {
+                "contract_id": int(contract.contract_id),
+                "items_synced": 0,
+                "contracts_with_items": 1 if existing_items_exist else 0,
+                "contracts_without_items": 0 if existing_items_exist else 1,
+                "contracts_reused_existing_items": 1 if existing_items_exist else 0,
+                "error": "contract_items_not_ready",
+                "status_code": 404,
+            }
+        raise
+
+    type_ids = _unique_positive_ids(_esi_value(item, "type_id") for item in items)
+    if type_ids:
+        _ensure_eve_item_types_via_esi(type_ids)
+
+    new_items: list[CorporateContractItem] = []
+    for item in items:
+        record_id = _normalize_int(_esi_value(item, "record_id"))
+        type_id = _normalize_int(_esi_value(item, "type_id"))
+        if not record_id or not type_id:
+            continue
+        new_items.append(
+            CorporateContractItem(
+                contract_id=contract.id,
+                is_included=bool(_esi_value(item, "is_included", False)),
+                is_singleton=bool(_esi_value(item, "is_singleton", False)),
+                quantity=int(_esi_value(item, "quantity", 0) or 0),
+                raw_quantity=_normalize_int(_esi_value(item, "raw_quantity")),
+                record_id=record_id,
+                type_name_id=type_id,
+            )
+        )
+
+    with transaction.atomic():
+        CorporateContractItem.objects.filter(contract_id=contract.id).delete()
+        if new_items:
+            CorporateContractItem.objects.bulk_create(
+                new_items,
+                batch_size=ESI_CONTRACT_ITEM_TYPES_BATCH_SIZE,
+            )
+
+    return {
+        "contract_id": int(contract.contract_id),
+        "items_synced": len(new_items),
+        "contracts_with_items": 1 if new_items else 0,
+        "contracts_without_items": 0 if new_items else 1,
+        "contracts_reused_existing_items": 0,
+    }
+
+
 def _sync_corporate_contracts_via_esi(corporation_id: int, *, force_refresh: bool = True) -> dict:
     try:
         audit_corp = _get_corporation_audit(corporation_id)
@@ -629,8 +725,7 @@ def sync_corporate_contracts_from_esi(
     corporation_id: int | None = None,
     force_refresh: bool = True,
 ) -> dict:
-    if corporation_id is None:
-        corporation_id = DEFAULT_SUBSIDY_CORPORATION_ID
+    corporation_id = _effective_corporation_id(corporation_id)
     return _sync_corporate_contracts_via_esi(
         corporation_id,
         force_refresh=force_refresh,
@@ -757,17 +852,26 @@ def _match_imported_contracts(
     target_contract_pks = set(created_pk_set)
     target_contract_pks.update(refreshed_pk_set)
 
-    unresolved_contracts = _corporation_contract_queryset(corporation_id).filter(
+    eligible_contracts = _exclude_review_locked_contracts(
+        _corporation_contract_queryset(corporation_id)
+    )
+
+    unresolved_contracts = eligible_contracts.filter(
         aasubsidy_meta__isnull=False,
         doctrine_match__isnull=True,
     ).values_list("id", flat=True)
     target_contract_pks.update(int(contract_pk) for contract_pk in unresolved_contracts)
+    eligible_target_contract_pks = {
+        int(contract_pk)
+        for contract_pk in eligible_contracts.filter(pk__in=target_contract_pks).values_list("id", flat=True)
+    }
+    skipped_review_locked = len(target_contract_pks - eligible_target_contract_pks)
 
     cfg = SubsidyConfig.active()
     filtered_contract_pks = [
         int(contract_pk)
         for contract_pk in apply_contract_exclusions(
-            _corporation_contract_queryset(corporation_id).filter(
+            eligible_contracts.filter(
                 pk__in=target_contract_pks,
             ),
             cfg,
@@ -779,6 +883,7 @@ def _match_imported_contracts(
             "matched": 0,
             "created_contract_matches": 0,
             "refreshed_contract_matches": 0,
+            "skipped_review_locked": skipped_review_locked,
             "claim_clearance": {"checked": 0, "cleared": 0, "skipped": 0},
         }
 
@@ -798,6 +903,7 @@ def _match_imported_contracts(
         "matched": matched,
         "created_contract_matches": created_count,
         "refreshed_contract_matches": refreshed_count,
+        "skipped_review_locked": skipped_review_locked,
         "claim_clearance": claim_clearance,
     }
 
@@ -834,8 +940,7 @@ def import_corporate_contract_reviews(
     auto_clear_claims: bool = True,
 ) -> dict:
     """Imports contract subsidies idempotently; refreshes contracts optionally; exempts qualifying records"""
-    if corporation_id is None:
-        corporation_id = DEFAULT_SUBSIDY_CORPORATION_ID
+    corporation_id = _effective_corporation_id(corporation_id)
 
     refresh_result = {"attempted": False, "ok": False}
     if force_refresh_contracts:
@@ -898,6 +1003,7 @@ def import_corporate_contract_reviews(
         "matched": 0,
         "created_contract_matches": 0,
         "refreshed_contract_matches": 0,
+        "skipped_review_locked": 0,
         "claim_clearance": {"checked": 0, "cleared": 0, "skipped": 0},
     }
     if match_contracts_on_import:

@@ -32,6 +32,7 @@ from ..models import (
 from corptools.models import CorporateContract
 from .matching import get_or_match_contracts
 from allianceauth.eveonline.models import EveCharacter
+from ..tasks import _effective_corporation_id
 
 INCR = 250_000
 
@@ -560,6 +561,7 @@ def doctrine_insights(corporation_id: int | None = None):
     cfg = _cfg()
     if corporation_id is None:
         corporation_id = cfg["corporation_id"]
+    corporation_id = _effective_corporation_id(corporation_id)
     now = timezone.now()
     slow_threshold = now - timezone.timedelta(days=7)
     expired_threshold = now - timezone.timedelta(days=30)
@@ -567,7 +569,7 @@ def doctrine_insights(corporation_id: int | None = None):
 
     slow_contracts_qs = (
         CorporateContract.objects.filter(
-            corporation_id=corporation_id,
+            corporation__corporation__corporation_id=corporation_id,
             status__iexact="outstanding",
             date_issued__lt=slow_threshold,
             date_expired__gt=now,
@@ -590,7 +592,7 @@ def doctrine_insights(corporation_id: int | None = None):
     expired_contracts_qs = (
         CorporateContract.objects.filter(
             expired_q,
-            corporation_id=corporation_id,
+            corporation__corporation__corporation_id=corporation_id,
             date_expired__gte=expired_threshold,
             date_expired__lte=now,
         )
@@ -602,7 +604,7 @@ def doctrine_insights(corporation_id: int | None = None):
 
     sold_contracts_qs = (
         CorporateContract.objects.filter(
-            corporation_id=corporation_id,
+            corporation__corporation__corporation_id=corporation_id,
             status__iexact="finished",
             date_issued__gte=sold_threshold,
         )
