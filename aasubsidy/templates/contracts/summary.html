@@ -90,7 +90,7 @@
                             {% with needed=r.stock_needed adj=r.adjusted_needed %}
                                 {% if r.stock_requested > 0 or r.claimed_total|default:0 > 0 %}
                                     <a href="#"
-                                       class="claim-link {% if r.claimed_total|default:0 > 0 %}text-warning{% else %}text-danger{% endif %}"
+                                       class="claim-link {% if adj == 0 %}text-success{% elif r.claimed_total|default:0 > 0 %}text-warning{% else %}text-danger{% endif %}"
                                        data-bs-toggle="modal"
                                        data-bs-target="#claimModal"
                                        data-fit-id="{{ r.fit_id }}"
