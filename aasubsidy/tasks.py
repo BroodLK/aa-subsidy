@@ -78,7 +78,31 @@ def _queue_corporate_contract_item_refreshes(
     }
 
 
+def _has_corporation_audit(corporation_id: int) -> bool | None:
+    try:
+        from corptools.models import CorporationAudit
+    except Exception:
+        return None
+    return CorporationAudit.objects.filter(
+        corporation__corporation_id=corporation_id
+    ).exists()
+
+
 def _force_refresh_corporate_contracts(corporation_id: int, *, force_refresh: bool = True) -> dict:
+    audit_exists = _has_corporation_audit(corporation_id)
+    if audit_exists is False:
+        logger.warning(
+            "Skipping corptools contract refresh for corporation %s: no matching CorporationAudit row exists.",
+            corporation_id,
+        )
+        return {
+            "attempted": False,
+            "ok": False,
+            "skipped": True,
+            "error": "missing_corporation_audit",
+            "corporation_id": corporation_id,
+        }
+
     helper_import_error = None
     try:
         from corptools.task_helpers import corp_helpers
@@ -127,6 +151,7 @@ def _force_refresh_corporate_contracts(corporation_id: int, *, force_refresh: bo
                     "ok": False,
                     "skipped": True,
                     "error": "missing_corporation_audit",
+                    "corporation_id": corporation_id,
                 }
             logger.warning(
                 "Corptools helper contract refresh failed for corporation %s: %s",
@@ -178,6 +203,7 @@ def _force_refresh_corporate_contracts(corporation_id: int, *, force_refresh: bo
                 "ok": False,
                 "skipped": True,
                 "error": "missing_corporation_audit",
+                "corporation_id": corporation_id,
             }
         logger.warning(
             "Corptools contract refresh failed for corporation %s: %s",

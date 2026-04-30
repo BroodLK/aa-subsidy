@@ -426,7 +426,15 @@ class SubsidyConfig(models.Model):
 
     @classmethod
     def active(cls) -> "SubsidyConfig":
-        obj = cls.objects.first()
+        obj = (
+            cls.objects.exclude(corporation_id=1)
+            .order_by("-id")
+            .first()
+        )
+        if obj:
+            return obj
+
+        obj = cls.objects.order_by("-id").first()
         if obj:
             return obj
         return cls.objects.create()
