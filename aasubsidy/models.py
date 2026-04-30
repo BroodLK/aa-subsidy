@@ -461,3 +461,37 @@ class FittingClaim(models.Model):
 
     def __str__(self) -> str:
         return f"{self.fitting_id}:{self.user_id}={self.quantity}"
+
+
+class FittingClaimAutoClearance(models.Model):
+    contract = models.OneToOneField(
+        "corptools.CorporateContract",
+        on_delete=models.CASCADE,
+        related_name="aasubsidy_claim_clearance",
+        db_index=True,
+    )
+    user = models.ForeignKey(
+        "auth.User",
+        on_delete=models.CASCADE,
+        related_name="+",
+        db_index=True,
+    )
+    fitting = models.ForeignKey(
+        "fittings.Fitting",
+        on_delete=models.CASCADE,
+        related_name="+",
+        db_index=True,
+    )
+    quantity = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Fitting Claim Auto Clearance"
+        verbose_name_plural = "Fitting Claim Auto Clearances"
+        indexes = [
+            models.Index(fields=["user", "fitting"], name="fca_user_fitting_idx"),
+            models.Index(fields=["created_at"], name="fca_created_at_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.contract_id}:{self.user_id}:{self.fitting_id}={self.quantity}"

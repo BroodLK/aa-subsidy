@@ -8,6 +8,7 @@ from .models import (
     DoctrineQuantityTolerance,
     DoctrineSubstitutionRule,
     DoctrineSystem,
+    FittingClaimAutoClearance,
     SubsidyConfig,
 )
 
@@ -193,6 +194,27 @@ class DoctrineContractDecisionAdmin(SubsidyAdminMixin, admin.ModelAdmin):
     list_filter = ("decision", "created_at")
     search_fields = ("contract__contract_id", "fitting__name", "summary")
     raw_id_fields = ("contract", "fitting", "created_by")
+    readonly_fields = ("created_at",)
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.has_perm("aasubsidy.subsidy_admin")
+
+    def has_add_permission(self, request):
+        return request.user.has_perm("aasubsidy.subsidy_admin")
+
+    def has_change_permission(self, request, obj=None):
+        return request.user.has_perm("aasubsidy.subsidy_admin")
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.has_perm("aasubsidy.subsidy_admin")
+
+
+@admin.register(FittingClaimAutoClearance)
+class FittingClaimAutoClearanceAdmin(SubsidyAdminMixin, admin.ModelAdmin):
+    list_display = ("contract", "user", "fitting", "quantity", "created_at")
+    list_filter = ("created_at",)
+    search_fields = ("contract__contract_id", "user__username", "fitting__name")
+    raw_id_fields = ("contract", "user", "fitting")
     readonly_fields = ("created_at",)
 
     def has_view_permission(self, request, obj=None):
