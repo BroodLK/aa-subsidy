@@ -1009,7 +1009,7 @@ class ContractItemsView(PermissionRequiredMixin, View):
                 _sync_single_corporate_contract_item_via_esi(
                     corporation_id=cc.corporation.corporation.corporation_id,
                     contract=cc,
-                    force_refresh=True,
+                    force_refresh=False,
                 )
                 result = get_or_match_contract(cc.pk, persist=True, refresh=True)
                 analysis = _serialize_match_result(result, include_items=True)

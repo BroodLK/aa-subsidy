@@ -1,3 +1,4 @@
+from datetime import datetime
 from functools import lru_cache
 
 from celery import shared_task
@@ -18,7 +19,7 @@ from corptools.models import (
     EveName,
 )
 from esi.errors import TokenError
-from esi.exceptions import HTTPClientError, HTTPNotModified
+from esi.exceptions import ESIErrorLimitException, ESIBucketLimitException, HTTPClientError, HTTPNotModified
 from esi.models import Token
 from esi.openapi_clients import ESIClientProvider
 
@@ -37,6 +38,7 @@ logger = get_extension_logger(__name__)
 DEFAULT_SUBSIDY_CORPORATION_ID = 98660859
 ESI_CONTRACT_SCOPE = "esi-contracts.read_corporation_contracts.v1"
 ESI_CONTRACT_ITEM_TYPES_BATCH_SIZE = 1000
+ESI_CONTRACT_ITEM_SYNC_BATCH_SIZE = 50
 
 try:
     from eveuniverse.models import EveType, EveMarketPrice
@@ -226,6 +228,15 @@ def _get_corporation_contract_tokens(corporation_id: int) -> list[Token]:
     )
 
 
+def _rate_limit_payload(exc: Exception) -> dict[str, object]:
+    return {
+        "rate_limited": True,
+        "retry_after": int(getattr(exc, "reset", 0) or 0),
+        "error": str(exc),
+        "error_type": exc.__class__.__name__,
+    }
+
+
 def _fetch_corporation_contracts_from_esi(
     corporation_id: int,
     *,
@@ -312,13 +323,33 @@ def _sync_corporate_contract_items_via_esi(
     contracts_with_items = 0
     contracts_without_items = 0
     reused_existing_items = 0
+    deferred_contracts = 0
     matchable_contract_ids: set[int] = set()
     failures: list[dict[str, object]] = []
     active_token = token
+    rate_limit: dict[str, object] | None = None
 
-    for contract_id, contract in contracts_by_id.items():
+    contracts_to_sync = []
+    for contract_id, contract in sorted(
+        contracts_by_id.items(),
+        key=lambda item: (
+            item[1].date_issued or timezone.make_aware(datetime.min),
+            item[0],
+        ),
+        reverse=True,
+    ):
         if str(contract.status).lower() == "deleted":
             continue
+        if not force_refresh and contract_id in existing_item_contract_ids:
+            matchable_contract_ids.add(contract_id)
+            continue
+        contracts_to_sync.append((contract_id, contract))
+
+    if len(contracts_to_sync) > ESI_CONTRACT_ITEM_SYNC_BATCH_SIZE:
+        deferred_contracts = len(contracts_to_sync) - ESI_CONTRACT_ITEM_SYNC_BATCH_SIZE
+        contracts_to_sync = contracts_to_sync[:ESI_CONTRACT_ITEM_SYNC_BATCH_SIZE]
+
+    for position, (contract_id, contract) in enumerate(contracts_to_sync):
 
         try:
             items, active_token = _fetch_contract_items_from_esi(
@@ -327,6 +358,16 @@ def _sync_corporate_contract_items_via_esi(
                 token=active_token,
                 force_refresh=force_refresh,
             )
+        except (ESIBucketLimitException, ESIErrorLimitException) as exc:
+            rate_limit = _rate_limit_payload(exc)
+            failures.append({"contract_id": contract_id, **rate_limit})
+            logger.info(
+                "Stopping contract item sync for corporation %s after hitting ESI rate limits: %s",
+                corporation_id,
+                exc,
+            )
+            deferred_contracts += len(contracts_to_sync) - position
+            break
         except HTTPClientError as exc:
             if getattr(exc, "status_code", None) == 404:
                 if contract_id in existing_item_contract_ids:
@@ -424,8 +465,10 @@ def _sync_corporate_contract_items_via_esi(
         "contracts_with_items": contracts_with_items,
         "contracts_without_items": contracts_without_items,
         "contracts_reused_existing_items": reused_existing_items,
+        "contracts_deferred": deferred_contracts,
         "contract_ids": sorted(matchable_contract_ids),
         "failures": failures,
+        "rate_limit": rate_limit,
     }
 
 
@@ -433,7 +476,7 @@ def _sync_single_corporate_contract_item_via_esi(
     *,
     corporation_id: int,
     contract: CorporateContract,
-    force_refresh: bool = True,
+    force_refresh: bool = False,
 ) -> dict:
     corporation_id = _effective_corporation_id(corporation_id)
     if str(contract.status).lower() == "deleted":
@@ -460,6 +503,15 @@ def _sync_single_corporate_contract_item_via_esi(
             token=tokens[0],
             force_refresh=force_refresh,
         )
+    except (ESIBucketLimitException, ESIErrorLimitException) as exc:
+        return {
+            "contract_id": int(contract.contract_id),
+            "items_synced": 0,
+            "contracts_with_items": 1 if existing_items_exist else 0,
+            "contracts_without_items": 0 if existing_items_exist else 1,
+            "contracts_reused_existing_items": 1 if existing_items_exist else 0,
+            **_rate_limit_payload(exc),
+        }
     except HTTPClientError as exc:
         if getattr(exc, "status_code", None) == 404:
             return {
@@ -512,7 +564,7 @@ def _sync_single_corporate_contract_item_via_esi(
     }
 
 
-def _sync_corporate_contracts_via_esi(corporation_id: int, *, force_refresh: bool = True) -> dict:
+def _sync_corporate_contracts_via_esi(corporation_id: int, *, force_refresh: bool = False) -> dict:
     try:
         audit_corp = _get_corporation_audit(corporation_id)
     except CorporationAudit.DoesNotExist:
@@ -533,6 +585,78 @@ def _sync_corporate_contracts_via_esi(corporation_id: int, *, force_refresh: boo
             corporation_id,
             force_refresh=force_refresh,
         )
+    except (ESIBucketLimitException, ESIErrorLimitException) as exc:
+        if force_refresh:
+            try:
+                contracts, token = _fetch_corporation_contracts_from_esi(
+                    corporation_id,
+                    force_refresh=False,
+                )
+            except HTTPNotModified:
+                logger.info(
+                    "Corporate contracts were unchanged for corporation %s.",
+                    corporation_id,
+                )
+                return {
+                    "attempted": True,
+                    "ok": True,
+                    "contracts_refreshed": 0,
+                    "contract_ids": [],
+                    "all_contract_ids": [],
+                    "items_synced": 0,
+                    "contracts_with_items": 0,
+                    "contracts_without_items": 0,
+                    "contracts_reused_existing_items": 0,
+                    "item_failures": [],
+                    "mode": "django_esi",
+                    "not_modified": True,
+                }
+            except (ESIBucketLimitException, ESIErrorLimitException) as fallback_exc:
+                logger.info(
+                    "Skipping direct ESI contract sync for corporation %s due to ESI rate limits: %s",
+                    corporation_id,
+                    fallback_exc,
+                )
+                return {
+                    "attempted": True,
+                    "ok": False,
+                    "corporation_id": corporation_id,
+                    "mode": "django_esi",
+                    **_rate_limit_payload(fallback_exc),
+                }
+            except Exception as fallback_exc:
+                logger.warning(
+                    "Direct ESI contract sync failed for corporation %s after forced-refresh rate limiting: %s",
+                    corporation_id,
+                    fallback_exc,
+                    exc_info=True,
+                )
+                return {
+                    "attempted": True,
+                    "ok": False,
+                    "error": str(fallback_exc),
+                    "corporation_id": corporation_id,
+                    "mode": "django_esi",
+                }
+            else:
+                logger.info(
+                    "Fell back to cached contract sync for corporation %s after ESI rate limits blocked a forced refresh.",
+                    corporation_id,
+                )
+                force_refresh = False
+        else:
+            logger.info(
+                "Skipping direct ESI contract sync for corporation %s due to ESI rate limits: %s",
+                corporation_id,
+                exc,
+            )
+            return {
+                "attempted": True,
+                "ok": False,
+                "corporation_id": corporation_id,
+                "mode": "django_esi",
+                **_rate_limit_payload(exc),
+            }
     except HTTPNotModified:
         logger.info(
             "Corporate contracts were unchanged for corporation %s.",
@@ -548,7 +672,9 @@ def _sync_corporate_contracts_via_esi(corporation_id: int, *, force_refresh: boo
             "contracts_with_items": 0,
             "contracts_without_items": 0,
             "contracts_reused_existing_items": 0,
+            "contracts_deferred": 0,
             "item_failures": [],
+            "item_rate_limit": None,
             "mode": "django_esi",
             "not_modified": True,
         }
@@ -712,7 +838,9 @@ def _sync_corporate_contracts_via_esi(corporation_id: int, *, force_refresh: boo
         "contracts_with_items": item_result["contracts_with_items"],
         "contracts_without_items": item_result["contracts_without_items"],
         "contracts_reused_existing_items": item_result["contracts_reused_existing_items"],
+        "contracts_deferred": item_result["contracts_deferred"],
         "item_failures": item_result["failures"],
+        "item_rate_limit": item_result["rate_limit"],
         "mode": "django_esi",
         "force_refresh": force_refresh,
         "token_character_id": getattr(token, "character_id", None),
@@ -723,7 +851,7 @@ def _sync_corporate_contracts_via_esi(corporation_id: int, *, force_refresh: boo
 def sync_corporate_contracts_from_esi(
     self,
     corporation_id: int | None = None,
-    force_refresh: bool = True,
+    force_refresh: bool = False,
 ) -> dict:
     corporation_id = _effective_corporation_id(corporation_id)
     return _sync_corporate_contracts_via_esi(
@@ -952,7 +1080,7 @@ def import_corporate_contract_reviews(
             )
         refresh_result = _sync_corporate_contracts_via_esi(
             corporation_id,
-            force_refresh=True,
+            force_refresh=False,
         )
 
     qs = _corporation_contract_queryset(corporation_id).only("id")
