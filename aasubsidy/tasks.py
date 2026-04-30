@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 from celery import shared_task
 from django.db import transaction
 from django.db.models import Q
@@ -10,6 +12,8 @@ from corptools.models import (
     CorporateContract,
     CorporateContractItem,
     CorporationAudit,
+    EveItemCategory,
+    EveItemGroup,
     EveItemType,
     EveName,
 )
@@ -47,12 +51,23 @@ def _corporation_contract_queryset(corporation_id: int):
     )
 
 
+@lru_cache(maxsize=1)
 def _esi_contract_client():
     return ESIClientProvider(
         compatibility_date=timezone.now().date(),
         ua_appname=__title__,
         ua_version=__version__,
         tags=["Contracts"],
+    ).client
+
+
+@lru_cache(maxsize=1)
+def _esi_universe_client():
+    return ESIClientProvider(
+        compatibility_date=timezone.now().date(),
+        ua_appname=__title__,
+        ua_version=__version__,
+        tags=["Universe"],
     ).client
 
 
@@ -70,6 +85,115 @@ def _normalize_int(value, default: int | None = None) -> int | None:
 
 def _unique_positive_ids(values) -> list[int]:
     return sorted({int(value) for value in values if value})
+
+
+def _placeholder_eve_item_type(type_id: int) -> EveItemType:
+    eve_type, _ = EveItemType.objects.update_or_create(
+        type_id=type_id,
+        defaults={
+            "name": str(type_id),
+            "group": None,
+            "description": None,
+            "mass": None,
+            "packaged_volume": None,
+            "portion_size": None,
+            "volume": None,
+            "published": False,
+            "radius": None,
+        },
+    )
+    return eve_type
+
+
+def _sync_eve_item_category_via_esi(category_id: int):
+    if not category_id:
+        return None
+
+    category = EveItemCategory.objects.filter(category_id=category_id).first()
+    if category is not None:
+        return category
+
+    payload = _esi_universe_client().Universe.GetUniverseCategoriesCategoryId(
+        category_id=category_id
+    ).result()
+    category, _ = EveItemCategory.objects.update_or_create(
+        category_id=category_id,
+        defaults={"name": str(_esi_value(payload, "name", category_id))},
+    )
+    return category
+
+
+def _sync_eve_item_group_via_esi(group_id: int):
+    if not group_id:
+        return None
+
+    group = EveItemGroup.objects.filter(group_id=group_id).first()
+    if group is not None:
+        return group
+
+    payload = _esi_universe_client().Universe.GetUniverseGroupsGroupId(
+        group_id=group_id
+    ).result()
+    category = None
+    category_id = _normalize_int(_esi_value(payload, "category_id"))
+    if category_id:
+        category = _sync_eve_item_category_via_esi(category_id)
+
+    group, _ = EveItemGroup.objects.update_or_create(
+        group_id=group_id,
+        defaults={
+            "name": str(_esi_value(payload, "name", group_id)),
+            "category": category,
+        },
+    )
+    return group
+
+
+def _sync_eve_item_type_via_esi(type_id: int):
+    payload = _esi_universe_client().Universe.GetUniverseTypesTypeId(
+        type_id=type_id
+    ).result()
+    group = None
+    group_id = _normalize_int(_esi_value(payload, "group_id"))
+    if group_id:
+        group = _sync_eve_item_group_via_esi(group_id)
+
+    eve_type, _ = EveItemType.objects.update_or_create(
+        type_id=type_id,
+        defaults={
+            "name": str(_esi_value(payload, "name", type_id)),
+            "group": group,
+            "description": _esi_value(payload, "description"),
+            "mass": _esi_value(payload, "mass"),
+            "packaged_volume": _esi_value(payload, "packaged_volume"),
+            "portion_size": _esi_value(payload, "portion_size"),
+            "volume": _esi_value(payload, "volume"),
+            "published": bool(_esi_value(payload, "published", False)),
+            "radius": _esi_value(payload, "radius"),
+        },
+    )
+    return eve_type
+
+
+def _ensure_eve_item_types_via_esi(type_ids) -> None:
+    missing_type_ids = set(_unique_positive_ids(type_ids))
+    if not missing_type_ids:
+        return
+
+    existing_type_ids = set(
+        EveItemType.objects.filter(type_id__in=missing_type_ids).values_list("type_id", flat=True)
+    )
+    for type_id in sorted(missing_type_ids - existing_type_ids):
+        try:
+            _sync_eve_item_type_via_esi(type_id)
+        except Exception as exc:
+            logger.warning(
+                "Failed to sync item type %s from ESI; creating placeholder row instead: %s",
+                type_id,
+                exc,
+                exc_info=True,
+            )
+            _placeholder_eve_item_type(type_id)
 
 
 def _get_corporation_audit(corporation_id: int) -> CorporationAudit:
@@ -245,7 +369,7 @@ def _sync_corporate_contract_items_via_esi(
 
         type_ids = _unique_positive_ids(_esi_value(item, "type_id") for item in items)
         if type_ids:
-            EveItemType.objects.create_bulk_from_esi(type_ids)
+            _ensure_eve_item_types_via_esi(type_ids)
 
         new_items: list[CorporateContractItem] = []
         for item in items:
