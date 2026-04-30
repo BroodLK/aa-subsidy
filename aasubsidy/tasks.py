@@ -30,6 +30,7 @@ from .models import CorporateContractSubsidy, FittingClaim, FittingClaimAutoClea
 
 logger = get_extension_logger(__name__)
 
+DEFAULT_SUBSIDY_CORPORATION_ID = 98660859
 ESI_CONTRACT_SCOPE = "esi-contracts.read_corporation_contracts.v1"
 ESI_CONTRACT_ITEM_TYPES_BATCH_SIZE = 1000
 
@@ -505,7 +506,7 @@ def sync_corporate_contracts_from_esi(
     force_refresh: bool = True,
 ) -> dict:
     if corporation_id is None:
-        corporation_id = SubsidyConfig.active().corporation_id
+        corporation_id = DEFAULT_SUBSIDY_CORPORATION_ID
     return _sync_corporate_contracts_via_esi(
         corporation_id,
         force_refresh=force_refresh,
@@ -710,7 +711,7 @@ def import_corporate_contract_reviews(
 ) -> dict:
     """Imports contract subsidies idempotently; refreshes contracts optionally; exempts qualifying records"""
     if corporation_id is None:
-        corporation_id = SubsidyConfig.active().corporation_id
+        corporation_id = DEFAULT_SUBSIDY_CORPORATION_ID
 
     refresh_result = {"attempted": False, "ok": False}
     if force_refresh_contracts:
