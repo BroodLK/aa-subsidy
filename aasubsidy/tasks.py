@@ -75,6 +75,7 @@ def _queue_corporate_contract_item_refreshes(
         "queued": queued,
         "task_ids": task_ids,
         "contract_ids": normalized_ids,
+        "task_name": getattr(update_contract_items_task, "name", None),
     }
 
 
@@ -86,6 +87,19 @@ def _has_corporation_audit(corporation_id: int) -> bool | None:
     return CorporationAudit.objects.filter(
         corporation__corporation_id=corporation_id
     ).exists()
+
+
+def _fallback_contract_ids_missing_items(corporation_id: int) -> list[int]:
+    return sorted({
+        int(contract_id)
+        for contract_id in CorporateContract.objects.filter(
+            corporation__corporation__corporation_id=corporation_id,
+            corporatecontractitem__isnull=True,
+        )
+        .exclude(status__iexact="deleted")
+        .values_list("contract_id", flat=True)
+        if contract_id
+    })
 
 
 def _force_refresh_corporate_contracts(corporation_id: int, *, force_refresh: bool = True) -> dict:
@@ -116,6 +130,14 @@ def _force_refresh_corporate_contracts(corporation_id: int, *, force_refresh: bo
                 corporation_id,
                 force_refresh=force_refresh,
             )
+            if force_refresh and not refreshed_ids:
+                refreshed_ids = _fallback_contract_ids_missing_items(corporation_id)
+                if refreshed_ids:
+                    logger.warning(
+                        "Corptools helper refresh returned no contract IDs for corporation %s; falling back to %s contracts missing items.",
+                        corporation_id,
+                        len(refreshed_ids),
+                    )
             queued_items = _queue_corporate_contract_item_refreshes(
                 corp_helpers.update_corporate_contract_items,
                 corporation_id,
@@ -136,6 +158,7 @@ def _force_refresh_corporate_contracts(corporation_id: int, *, force_refresh: bo
                 "contract_ids": queued_items["contract_ids"],
                 "contract_item_tasks_queued": queued_items["queued"],
                 "contract_item_task_ids": queued_items["task_ids"],
+                "contract_item_task_name": queued_items["task_name"],
                 "force_refresh": force_refresh,
                 "mode": "helper",
                 "message": result,
