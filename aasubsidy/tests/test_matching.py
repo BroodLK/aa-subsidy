@@ -153,6 +153,84 @@ class TestDoctrineMatching(unittest.TestCase):
         self.assertEqual(result.score, Decimal("50.00"))
         self.assertEqual(result.source_hint, "learned_rule")
 
+    def test_missing_and_extra_with_matching_metadata_offer_substitution_flow(self):
+        fit = _fit_definition(
+            rules=[
+                ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
+                ItemRuleData(500, "Domination EM Armor Hardener", expected_quantity=1),
+            ],
+            type_info={
+                100: TypeInfo(100, "Hull"),
+                500: TypeInfo(500, "Domination EM Armor Hardener", group_id=20),
+            },
+        )
+        contract = {
+            100: ContractItemData(100, "Hull", included_qty=1),
+            501: ContractItemData(501, "True Sansha EM Armor Hardener", included_qty=1, group_id=20),
+        }
+
+        result = evaluate_contract_against_definition(contract, fit)
+        item_rows = result.evidence["item_rows"]
+        missing_row = next(row for row in item_rows if row["expected_type_id"] == 500)
+        extra_row = next(row for row in item_rows if row["actual_type_id"] == 501)
+
+        self.assertTrue(
+            any(
+                isinstance(action, dict)
+                and action.get("name") == "specific_substitute"
+                and action.get("expected_type_id") == 500
+                and action.get("actual_type_id") == 501
+                for action in missing_row["actions"]
+            )
+        )
+        self.assertTrue(
+            any(
+                isinstance(action, dict)
+                and action.get("name") == "specific_substitute"
+                and action.get("expected_type_id") == 500
+                and action.get("actual_type_id") == 501
+                for action in extra_row["actions"]
+            )
+        )
+
+    def test_substitution_flow_avoids_cross_pairing_same_quantity_items(self):
+        fit = _fit_definition(
+            rules=[
+                ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
+                ItemRuleData(500, "Domination EM Armor Hardener", expected_quantity=1),
+                ItemRuleData(600, "Domination Thermal Armor Hardener", expected_quantity=1),
+            ],
+            type_info={
+                100: TypeInfo(100, "Hull"),
+                500: TypeInfo(500, "Domination EM Armor Hardener", group_id=20),
+                600: TypeInfo(600, "Domination Thermal Armor Hardener", group_id=20),
+            },
+        )
+        contract = {
+            100: ContractItemData(100, "Hull", included_qty=1),
+            501: ContractItemData(501, "True Sansha EM Armor Hardener", included_qty=1, group_id=20),
+            601: ContractItemData(601, "True Sansha Thermal Armor Hardener", included_qty=1, group_id=20),
+        }
+
+        result = evaluate_contract_against_definition(contract, fit)
+        item_rows = result.evidence["item_rows"]
+        missing_em = next(row for row in item_rows if row["expected_type_id"] == 500)
+        missing_thermal = next(row for row in item_rows if row["expected_type_id"] == 600)
+
+        em_targets = sorted(
+            action["actual_type_id"]
+            for action in missing_em["actions"]
+            if isinstance(action, dict) and action.get("name") == "specific_substitute"
+        )
+        thermal_targets = sorted(
+            action["actual_type_id"]
+            for action in missing_thermal["actions"]
+            if isinstance(action, dict) and action.get("name") == "specific_substitute"
+        )
+
+        self.assertEqual(em_targets, [501])
+        self.assertEqual(thermal_targets, [601])
+
     def test_forced_fit_and_rerun_keep_same_analysis(self):
         fit = _fit_definition(
             rules=[

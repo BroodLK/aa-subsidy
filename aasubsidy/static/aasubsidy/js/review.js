@@ -447,16 +447,20 @@
                     ignore_extra_item: window.AASubsidyConfig.lang.ignoreExtra,
                 };
                 return '<div class="d-flex gap-1 flex-wrap">' + actions.map(action => {
+                    const actionObj = (action && typeof action === 'object') ? action : { name: action };
+                    const actionName = String(actionObj.name || '');
                     const params = new URLSearchParams({
                         fit_id: String(analysis.selected_fit_id || ''),
-                        action_name: action,
-                        expected_type_id: item.expected_type_id || '',
-                        actual_type_id: item.actual_type_id || item.type_id || '',
-                        expected_qty: item.expected_qty || '',
-                        actual_qty: item.qty || '',
+                        action_name: actionName,
+                        expected_type_id: actionObj.expected_type_id || item.expected_type_id || '',
+                        actual_type_id: actionObj.actual_type_id || item.actual_type_id || item.type_id || '',
+                        expected_qty: actionObj.expected_qty || item.expected_qty || '',
+                        actual_qty: actionObj.actual_qty || item.qty || '',
                         category: item.category || '',
                     });
-                    return `<button type="button" class="btn btn-sm btn-outline-primary create-rule-btn" data-contract="${id}" data-payload="${encodeURIComponent(params.toString())}">${labels[action] || action}</button>`;
+                    const title = actionObj.title ? ` title="${escapeHtml(actionObj.title)}"` : '';
+                    const label = actionObj.label || labels[actionName] || actionName;
+                    return `<button type="button" class="btn btn-sm btn-outline-primary create-rule-btn" data-contract="${id}" data-payload="${encodeURIComponent(params.toString())}"${title}>${escapeHtml(label)}</button>`;
                 }).join('') + '</div>';
             };
 

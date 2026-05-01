@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -9,7 +10,7 @@ from typing import Any, Iterable
 
 MAX_SCORE = Decimal("100.00")
 ZERO = Decimal("0.00")
-MATCH_ENGINE_VERSION = 5
+MATCH_ENGINE_VERSION = 6
 
 
 @dataclass(slots=True)
@@ -29,6 +30,11 @@ class ContractItemData:
     name: str
     included_qty: int = 0
     excluded_qty: int = 0
+    group_id: int | None = None
+    market_group_id: int | None = None
+    meta_level: int | None = None
+    meta_group_id: int | None = None
+    faction: bool = False
 
 
 @dataclass(slots=True)
@@ -201,6 +207,154 @@ def _row(
         "matched_type_ids": matched_type_ids or [],
         "matched_types": matched_types or [],
     }
+
+
+def _name_tokens(name: str | None) -> list[str]:
+    return re.findall(r"[a-z0-9]+", str(name or "").lower())
+
+
+def _token_overlap_count(left: str | None, right: str | None) -> int:
+    return len(set(_name_tokens(left)) & set(_name_tokens(right)))
+
+
+def _type_info_from_contract_item(item: ContractItemData | None) -> TypeInfo | None:
+    if item is None:
+        return None
+    return TypeInfo(
+        type_id=int(item.type_id),
+        name=item.name,
+        group_id=item.group_id,
+        market_group_id=item.market_group_id,
+        meta_level=item.meta_level,
+        meta_group_id=item.meta_group_id,
+        faction=bool(item.faction),
+    )
+
+
+def _has_matching_action(
+    actions: list[str | dict[str, Any]],
+    *,
+    action_name: str,
+    expected_type_id: int | None,
+    actual_type_id: int | None,
+) -> bool:
+    for action in actions:
+        if isinstance(action, str):
+            if action == action_name and expected_type_id is None and actual_type_id is None:
+                return True
+            continue
+        if (
+            action.get("name") == action_name
+            and int(action.get("expected_type_id") or 0) == int(expected_type_id or 0)
+            and int(action.get("actual_type_id") or 0) == int(actual_type_id or 0)
+        ):
+            return True
+    return False
+
+
+def _maybe_add_substitution_suggestions(
+    item_rows: list[dict[str, Any]],
+    *,
+    contract_items: dict[int, ContractItemData],
+    fitting: FittingDefinition,
+) -> None:
+    missing_rows = []
+    extra_rows = []
+
+    for row in item_rows:
+        expected_type_id = int(row.get("expected_type_id") or 0) or None
+        actual_type_id = int(row.get("actual_type_id") or row.get("type_id") or 0) or None
+        actual_qty = int(row.get("qty") or 0)
+        expected_qty = int(row.get("expected_qty") or 0)
+
+        if expected_type_id and expected_qty > actual_qty:
+            missing_rows.append(row)
+        if not expected_type_id and actual_type_id and actual_qty > 0:
+            extra_rows.append(row)
+
+    for missing_row in missing_rows:
+        expected_type_id = int(missing_row.get("expected_type_id") or 0) or None
+        missing_qty = max(int(missing_row.get("expected_qty") or 0) - int(missing_row.get("qty") or 0), 0)
+        if not expected_type_id or missing_qty <= 0:
+            continue
+        expected_info = fitting.type_info.get(
+            expected_type_id,
+            TypeInfo(type_id=expected_type_id, name=str(missing_row.get("name") or expected_type_id)),
+        )
+
+        candidates: list[tuple[int, int, int, dict[str, Any]]] = []
+
+        for extra_row in extra_rows:
+            actual_type_id = int(extra_row.get("actual_type_id") or extra_row.get("type_id") or 0) or None
+            actual_qty = int(extra_row.get("qty") or 0)
+            if not actual_type_id or actual_qty != missing_qty:
+                continue
+            actual_info = _type_info_from_contract_item(contract_items.get(actual_type_id))
+            if actual_info is None:
+                continue
+
+            meta_rank = 0
+            if expected_info.group_id and actual_info.group_id and expected_info.group_id == actual_info.group_id:
+                meta_rank = 2
+            elif (
+                expected_info.market_group_id
+                and actual_info.market_group_id
+                and expected_info.market_group_id == actual_info.market_group_id
+            ):
+                meta_rank = 1
+            if meta_rank <= 0:
+                continue
+
+            overlap = _token_overlap_count(missing_row.get("name"), extra_row.get("name"))
+            candidates.append((meta_rank, overlap, actual_type_id, extra_row))
+
+        if not candidates:
+            continue
+
+        candidates.sort(key=lambda entry: (-entry[0], -entry[1], entry[2]))
+        top_meta_rank, top_overlap, _, top_extra_row = candidates[0]
+        if len(candidates) > 1:
+            next_meta_rank, next_overlap, _, _ = candidates[1]
+            if (top_meta_rank, top_overlap) == (next_meta_rank, next_overlap):
+                continue
+
+        actual_type_id = int(top_extra_row.get("actual_type_id") or top_extra_row.get("type_id") or 0) or None
+        if not actual_type_id:
+            continue
+
+        missing_actions = missing_row.setdefault("actions", [])
+        if not _has_matching_action(
+            missing_actions,
+            action_name="specific_substitute",
+            expected_type_id=expected_type_id,
+            actual_type_id=actual_type_id,
+        ):
+            missing_actions.append(
+                {
+                    "name": "specific_substitute",
+                    "expected_type_id": expected_type_id,
+                    "actual_type_id": actual_type_id,
+                    "label": f"Allow Substitute: {top_extra_row.get('name')}",
+                    "title": f"Allow {top_extra_row.get('name')} as a substitute for {missing_row.get('name')}.",
+                }
+            )
+
+        extra_actions = top_extra_row.setdefault("actions", [])
+        if not _has_matching_action(
+            extra_actions,
+            action_name="specific_substitute",
+            expected_type_id=expected_type_id,
+            actual_type_id=actual_type_id,
+        ):
+            extra_actions.append(
+                {
+                    "name": "specific_substitute",
+                    "expected_type_id": expected_type_id,
+                    "actual_type_id": actual_type_id,
+                    "label": f"Allow Substitute: {missing_row.get('name')}",
+                    "title": f"Allow {top_extra_row.get('name')} as a substitute for {missing_row.get('name')}.",
+                }
+            )
 
 
 def _substitution_matches(
@@ -428,7 +582,7 @@ def evaluate_contract_against_definition(
             for actual_type_id in candidate_actual_ids:
                 if substitute_qty >= shortage_target:
                     break
-                actual_info = fitting.type_info.get(actual_type_id, TypeInfo(type_id=actual_type_id, name=str(actual_type_id)))
+                actual_info = fitting.type_info.get(actual_type_id) or _type_info_from_contract_item(contract_items.get(actual_type_id)) or TypeInfo(type_id=actual_type_id, name=str(actual_type_id))
                 matched_rule = next((
                     sub_rule for sub_rule in explicit_rules
                     if _substitution_matches(sub_rule, expected=expected_type, actual=actual_info)
@@ -583,7 +737,7 @@ def evaluate_contract_against_definition(
             continue
         contract_item = contract_items.get(actual_type_id)
         actual_name = contract_item.name if contract_item else str(actual_type_id)
-        actual_type_info = fitting.type_info.get(actual_type_id, TypeInfo(type_id=actual_type_id, name=actual_name))
+        actual_type_info = fitting.type_info.get(actual_type_id) or _type_info_from_contract_item(contract_item) or TypeInfo(type_id=actual_type_id, name=actual_name)
         is_consumable_extra = _is_consumable_market_group(actual_type_info.market_group_id)
 
         if fitting.profile.allow_extra_items:
@@ -665,6 +819,7 @@ def evaluate_contract_against_definition(
             "points_earned": float(Decimal(expected_items) - penalty_points),
         },
     }
+    _maybe_add_substitution_suggestions(item_rows, contract_items=contract_items, fitting=fitting)
 
     return CandidateMatch(
         fitting_id=fitting.fitting_id,
@@ -1620,7 +1775,6 @@ def match_contracts(
     CorporateContractSubsidy = refs["CorporateContractSubsidy"]
     DoctrineContractDecision = refs["DoctrineContractDecision"]
     Fitting = refs["Fitting"]
-    Sum = refs["Sum"]
     SubsidyConfig = refs["SubsidyConfig"]
 
     contract_ids = [int(contract_id) for contract_id in contract_ids if contract_id]
@@ -1650,25 +1804,28 @@ def match_contracts(
             "created_at": decision.created_at.isoformat() if decision.created_at else None,
         }
 
-    item_rows = list(
-        CorporateContractItem.objects.filter(contract_id__in=db_contract_ids)
-        .values("contract_id", "type_name_id", "type_name__name", "is_included")
-        .annotate(total_qty=Sum("quantity"))
-    )
     contract_items_map: dict[int, dict[int, ContractItemData]] = defaultdict(dict)
     hull_type_ids: set[int] = set()
+    item_rows = CorporateContractItem.objects.filter(contract_id__in=db_contract_ids).select_related("type_name")
     for row in item_rows:
-        contract_id = int(row["contract_id"])
-        type_id = int(row["type_name_id"])
+        contract_id = int(row.contract_id)
+        type_id = int(row.type_name_id)
         item = contract_items_map[contract_id].get(type_id)
+        eve_type = getattr(row, "type_name", None)
         if item is None:
+            faction_hint = str(getattr(eve_type, "name", "") or "").lower()
             item = ContractItemData(
                 type_id=type_id,
-                name=row["type_name__name"] or str(type_id),
+                name=getattr(eve_type, "name", None) or str(type_id),
+                group_id=_attr(eve_type, ("group_id", "eve_group_id", "group_fk_id")),
+                market_group_id=_attr(eve_type, ("market_group_id", "eve_market_group_id")),
+                meta_level=_attr(eve_type, ("meta_level",)),
+                meta_group_id=_attr(eve_type, ("meta_group_id",)),
+                faction=("faction" in faction_hint or "navy" in faction_hint),
             )
             contract_items_map[contract_id][type_id] = item
-        qty = int(row["total_qty"] or 0)
-        if row["is_included"]:
+        qty = int(getattr(row, "quantity", 0) or 0)
+        if row.is_included:
             item.included_qty += qty
             if item.included_qty > 0:
                 hull_type_ids.add(type_id)
