@@ -10,7 +10,7 @@ from typing import Any, Iterable
 
 MAX_SCORE = Decimal("100.00")
 ZERO = Decimal("0.00")
-MATCH_ENGINE_VERSION = 8
+MATCH_ENGINE_VERSION = 10
 DRONE_CATEGORY_ID = 18
 
 
@@ -220,6 +220,13 @@ def _token_overlap_count(left: str | None, right: str | None) -> int:
     return len(set(_name_tokens(left)) & set(_name_tokens(right)))
 
 
+def _is_drone_substitution_candidate(*, expected: TypeInfo, actual: TypeInfo) -> bool:
+    return (
+        expected.category_id == DRONE_CATEGORY_ID
+        and actual.category_id == DRONE_CATEGORY_ID
+    )
+
+
 def _type_info_from_contract_item(item: ContractItemData | None) -> TypeInfo | None:
     if item is None:
         return None
@@ -306,10 +313,7 @@ def _maybe_add_substitution_suggestions(
                 and expected_info.market_group_id == actual_info.market_group_id
             ):
                 meta_rank = 2
-            elif (
-                expected_info.category_id == DRONE_CATEGORY_ID
-                and actual_info.category_id == DRONE_CATEGORY_ID
-            ):
+            elif _is_drone_substitution_candidate(expected=expected_info, actual=actual_info):
                 meta_rank = 1
             if meta_rank <= 0:
                 continue
@@ -399,6 +403,8 @@ def _implicit_substitution_penalty(
 ) -> Decimal | None:
     if expected.type_id == actual.type_id:
         return ZERO
+    if _is_drone_substitution_candidate(expected=expected, actual=actual):
+        return Decimal("1.00")
     if profile.allow_meta_variants:
         if (
             expected.group_id
@@ -651,6 +657,11 @@ def evaluate_contract_against_definition(
                     ))
 
         actual_qty = exact_qty + substitute_qty
+        matched_tolerance = _match_tolerance(
+            fitting.quantity_tolerances.get(rule.expected_type_id, []),
+            actual_qty=actual_qty,
+            preferred_qty=preferred_qty,
+        )
         if exact_qty > 0:
             remaining[rule.expected_type_id] -= exact_qty
             if remaining[rule.expected_type_id] <= 0:
@@ -691,6 +702,11 @@ def evaluate_contract_against_definition(
                 fitting_id=fitting.fitting_id,
             ))
 
+        # Required item missing but covered by an explicit tolerance rule
+        elif actual_qty < minimum_qty and matched_tolerance is not None and _decimal(matched_tolerance.penalty_points) <= ZERO:
+            used_learned_rule = True
+            reason = "Allowed quantity variance."
+
         # Required item missing
         elif actual_qty < minimum_qty:
             status = "error"
@@ -712,6 +728,21 @@ def evaluate_contract_against_definition(
                 else:
                     actions.append("optional_item")
                     actions.append("quantity_tolerance")
+
+        # Item present with an explicit consumable tolerance rule
+        elif (
+            actual_qty > 0
+            and is_consumable
+            and preferred_qty > 0
+            and matched_tolerance is not None
+            and _decimal(matched_tolerance.penalty_points) <= ZERO
+            and (
+                actual_qty < int(Decimal(preferred_qty) * Decimal("0.80"))
+                or actual_qty > int(Decimal(preferred_qty) * Decimal("1.20"))
+            )
+        ):
+            used_learned_rule = True
+            reason = "Allowed quantity variance."
 
         # Item present - check quantity for consumables
         elif actual_qty > 0:

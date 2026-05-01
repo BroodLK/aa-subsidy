@@ -128,6 +128,57 @@ class TestDoctrineMatching(unittest.TestCase):
         self.assertTrue(any(issue["code"] == "consumable_quantity_tolerance" for issue in result.warnings))
         self.assertEqual(result.score, Decimal("75.00"))
 
+    def test_zero_penalty_quantity_tolerance_allows_missing_required_quantity(self):
+        fit = _fit_definition(
+            rules=[
+                ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
+                ItemRuleData(200, "Module", expected_quantity=2),
+            ],
+            tolerances={200: [QuantityToleranceData(200, mode="missing_only", lower_bound=0, upper_bound=1, penalty_points=Decimal("0.00"))]},
+            type_info={
+                100: TypeInfo(100, "Hull"),
+                200: TypeInfo(200, "Module"),
+            },
+        )
+        contract = {
+            100: ContractItemData(100, "Hull", included_qty=1),
+            200: ContractItemData(200, "Module", included_qty=1),
+        }
+
+        result = evaluate_contract_against_definition(contract, fit)
+        item_rows = result.evidence["item_rows"]
+        module_row = next(row for row in item_rows if row["expected_type_id"] == 200)
+
+        self.assertEqual(result.hard_failures, [])
+        self.assertEqual(result.warnings, [])
+        self.assertEqual(result.score, Decimal("100.00"))
+        self.assertEqual(module_row["status"], "ok")
+        self.assertEqual(module_row["reason"], "Allowed quantity variance.")
+
+    def test_zero_penalty_quantity_tolerance_allows_consumable_variance(self):
+        fit = _fit_definition(
+            rules=[
+                ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
+                ItemRuleData(400, "Ammo", expected_quantity=3200, category="ammo"),
+            ],
+            tolerances={400: [QuantityToleranceData(400, mode="extra_only", lower_bound=0, upper_bound=800, penalty_points=Decimal("0.00"))]},
+            type_info={100: TypeInfo(100, "Hull"), 400: TypeInfo(400, "Ammo", market_group_id=11)},
+        )
+        contract = {
+            100: ContractItemData(100, "Hull", included_qty=1),
+            400: ContractItemData(400, "Ammo", included_qty=4000),
+        }
+
+        result = evaluate_contract_against_definition(contract, fit)
+        item_rows = result.evidence["item_rows"]
+        ammo_row = next(row for row in item_rows if row["expected_type_id"] == 400)
+
+        self.assertEqual(result.hard_failures, [])
+        self.assertEqual(result.warnings, [])
+        self.assertEqual(result.score, Decimal("100.00"))
+        self.assertEqual(ammo_row["status"], "ok")
+        self.assertEqual(ammo_row["reason"], "Allowed quantity variance.")
+
     def test_group_substitute_matches_with_penalty(self):
         fit = _fit_definition(
             rules=[
@@ -262,7 +313,7 @@ class TestDoctrineMatching(unittest.TestCase):
         self.assertEqual(em_targets, [501])
         self.assertEqual(thermal_targets, [601])
 
-    def test_drone_category_items_offer_substitution_flow_even_with_different_groups(self):
+    def test_drone_category_items_auto_substitute_even_with_different_groups(self):
         fit = _fit_definition(
             rules=[
                 ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
@@ -280,27 +331,17 @@ class TestDoctrineMatching(unittest.TestCase):
 
         result = evaluate_contract_against_definition(contract, fit)
         item_rows = result.evidence["item_rows"]
-        missing_row = next(row for row in item_rows if row["expected_type_id"] == 700)
-        extra_row = next(row for row in item_rows if row["actual_type_id"] == 701)
+        drone_row = next(row for row in item_rows if row["expected_type_id"] == 700)
 
-        self.assertTrue(
-            any(
-                isinstance(action, dict)
-                and action.get("name") == "specific_substitute"
-                and action.get("expected_type_id") == 700
-                and action.get("actual_type_id") == 701
-                for action in missing_row["actions"]
-            )
-        )
-        self.assertTrue(
-            any(
-                isinstance(action, dict)
-                and action.get("name") == "specific_substitute"
-                and action.get("expected_type_id") == 700
-                and action.get("actual_type_id") == 701
-                for action in extra_row["actions"]
-            )
-        )
+        self.assertEqual(result.hard_failures, [])
+        self.assertTrue(any(issue["code"] == "substitution" for issue in result.warnings))
+        self.assertEqual(result.score, Decimal("50.00"))
+        self.assertEqual(result.source_hint, "learned_rule")
+        self.assertEqual(drone_row["status"], "ok")
+        self.assertEqual(drone_row["qty"], 5)
+        self.assertEqual(drone_row["matched_type_ids"], [701])
+        self.assertFalse(drone_row["is_missing"])
+        self.assertFalse(any(row["actual_type_id"] == 701 for row in item_rows))
 
     def test_forced_fit_and_rerun_keep_same_analysis(self):
         fit = _fit_definition(

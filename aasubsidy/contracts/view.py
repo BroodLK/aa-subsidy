@@ -946,9 +946,9 @@ class CreateRuleView(PermissionRequiredMixin, View):
                 mode=mode,
                 lower_bound=lower_bound,
                 upper_bound=upper_bound,
-                defaults={"penalty_points": Decimal("1.00")},
+                defaults={"penalty_points": Decimal("0.00")},
             )
-            tolerance.penalty_points = tolerance.penalty_points or Decimal("1.00")
+            tolerance.penalty_points = Decimal("0.00")
             tolerance.save(update_fields=["penalty_points"])
         elif action == "ignore_extra_item":
             target_type_id = actual_type_id or expected_type_id
