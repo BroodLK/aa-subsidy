@@ -10,7 +10,7 @@ from typing import Any, Iterable
 
 MAX_SCORE = Decimal("100.00")
 ZERO = Decimal("0.00")
-MATCH_ENGINE_VERSION = 6
+MATCH_ENGINE_VERSION = 7
 
 
 @dataclass(slots=True)
@@ -1477,7 +1477,6 @@ def _load_fit_definitions(fit_ids: Iterable[int]) -> dict[int, FittingDefinition
     DoctrineItemRule = refs["DoctrineItemRule"]
     DoctrineSubstitutionRule = refs["DoctrineSubstitutionRule"]
     DoctrineQuantityTolerance = refs["DoctrineQuantityTolerance"]
-    Sum = refs["Sum"]
 
     fit_ids = {int(fit_id) for fit_id in fit_ids if fit_id}
     if not fit_ids:
@@ -1507,16 +1506,25 @@ def _load_fit_definitions(fit_ids: Iterable[int]) -> dict[int, FittingDefinition
         .select_related("eve_type", "profile")
         .order_by("eve_type_id", "id")
     )
-    default_fit_items = list(
+    default_fit_item_rows = list(
         FittingItem.objects.filter(fit_id__in=fit_ids)
-        .values("fit_id", "type_id", "type_fk__name")
-        .annotate(total_qty=Sum("quantity"))
-        .order_by("fit_id", "type_fk__name")
+        .select_related("type_fk")
+        .order_by("fit_id", "type_fk__name", "id")
     )
 
-    fit_items_by_fit: dict[int, list[dict[str, Any]]] = defaultdict(list)
-    for row in default_fit_items:
-        fit_items_by_fit[int(row["fit_id"])].append(row)
+    fit_items_by_fit: dict[int, dict[int, dict[str, Any]]] = defaultdict(dict)
+    for row in default_fit_item_rows:
+        fit_id = int(row.fit_id)
+        type_id = int(row.type_id)
+        bucket = fit_items_by_fit[fit_id].get(type_id)
+        if bucket is None:
+            bucket = {
+                "type_id": type_id,
+                "type_obj": getattr(row, "type_fk", None),
+                "total_qty": 0,
+            }
+            fit_items_by_fit[fit_id][type_id] = bucket
+        bucket["total_qty"] += int(getattr(row, "quantity", 0) or 0)
 
     rules_by_fit: dict[int, list[ItemRuleData]] = defaultdict(list)
     type_info_by_fit: dict[int, dict[int, TypeInfo]] = defaultdict(dict)
@@ -1544,9 +1552,10 @@ def _load_fit_definitions(fit_ids: Iterable[int]) -> dict[int, FittingDefinition
         )
 
     for fit_id, items in fit_items_by_fit.items():
-        for row in items:
+        for row in items.values():
             type_id = int(row["type_id"])
-            name = row["type_fk__name"] or str(type_id)
+            type_obj = row.get("type_obj")
+            name = getattr(type_obj, "name", None) or str(type_id)
             rules_by_fit[fit_id].append(
                 ItemRuleData(
                     expected_type_id=type_id,
@@ -1558,7 +1567,7 @@ def _load_fit_definitions(fit_ids: Iterable[int]) -> dict[int, FittingDefinition
                     sort_order=0,
                 )
             )
-            type_info_by_fit[fit_id][type_id] = TypeInfo(type_id=type_id, name=name)
+            type_info_by_fit[fit_id][type_id] = _type_info_from_obj(type_obj) if type_obj is not None else TypeInfo(type_id=type_id, name=name)
 
     for rule in explicit_rules:
         fit_id = int(rule.profile.fitting_id)
