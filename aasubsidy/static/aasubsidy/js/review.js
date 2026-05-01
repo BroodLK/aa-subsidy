@@ -4,16 +4,98 @@
     const overlay = document.getElementById('loadingOverlay');
     const showLoading = () => { if (overlay) overlay.style.display = 'block'; };
     const hideLoading = () => { if (overlay) overlay.style.display = 'none'; };
+    const subsidyFormatter = new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+
+    function sanitizeCurrencyCharacters(raw) {
+      return String(raw ?? '').replace(/[^0-9,.\-]/g, '');
+    }
+
+    function normalizeCurrencyInputValue(raw) {
+      const sanitized = sanitizeCurrencyCharacters(raw).replaceAll(',', '');
+      let normalized = '';
+      let hasDecimal = false;
+
+      for (let idx = 0; idx < sanitized.length; idx += 1) {
+        const ch = sanitized[idx];
+        if (ch >= '0' && ch <= '9') {
+          normalized += ch;
+          continue;
+        }
+        if (ch === '.' && !hasDecimal) {
+          normalized += ch;
+          hasDecimal = true;
+          continue;
+        }
+        if (ch === '-' && normalized.length === 0) {
+          normalized += ch;
+        }
+      }
+
+      return normalized;
+    }
+
+    function parseCurrencyInputValue(raw) {
+      const normalized = normalizeCurrencyInputValue(raw);
+      if (!normalized || normalized === '-' || normalized === '.' || normalized === '-.') {
+        return null;
+      }
+      const value = Number(normalized);
+      return Number.isFinite(value) ? value : null;
+    }
+
+    function formatCurrencyDisplayValue(raw) {
+      const parsed = parseCurrencyInputValue(raw);
+      return parsed === null ? '' : subsidyFormatter.format(parsed);
+    }
+
+    function setSubsidyInputValue(input, rawValue, options = {}) {
+      if (!input) return;
+      const normalized = normalizeCurrencyInputValue(rawValue);
+      input.dataset.rawValue = normalized;
+      input.value = options.displayRaw ? normalized : formatCurrencyDisplayValue(normalized);
+    }
+
+    function getSubsidyRawValue(input) {
+      if (!input) return '';
+      const normalized = normalizeCurrencyInputValue(input.dataset.rawValue || input.value || '');
+      input.dataset.rawValue = normalized;
+      return normalized;
+    }
+
+    function getSubsidySubmitValue(input) {
+      const parsed = parseCurrencyInputValue(getSubsidyRawValue(input));
+      return parsed === null ? '' : parsed.toFixed(2);
+    }
+
+    function getSubsidyNumericValue(input) {
+      const rawValue = getSubsidyRawValue(input);
+      if (!rawValue) return 0;
+      const parsed = Number(rawValue);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function syncSubsidyCellValue(input) {
+      const subsidyCell = input && input.closest('td[data-suggested]');
+      if (!subsidyCell) return;
+      const rawValue = getSubsidyRawValue(input);
+      const parsed = parseCurrencyInputValue(rawValue);
+      subsidyCell.setAttribute('data-val', parsed === null ? '' : parsed.toFixed(2));
+    }
 
     document.querySelectorAll('#contractsTable tbody tr').forEach(tr => {
       const subTd = tr.querySelector('td[data-suggested]');
       const input = tr.querySelector("input[data-field='subsidy_amount']");
       if (!subTd || !input) return;
-      const current = parseFloat(input.value || '0') || 0;
+      const current = getSubsidyNumericValue(input);
       const suggested = parseFloat(subTd.getAttribute('data-suggested') || '0') || 0;
       if (current === 0 && suggested > 0) {
-        input.value = suggested.toFixed(2);
-        subTd.setAttribute('data-val', suggested);
+        setSubsidyInputValue(input, suggested.toFixed(2));
+        subTd.setAttribute('data-val', suggested.toFixed(2));
+      } else {
+        setSubsidyInputValue(input, input.value || '');
       }
       const pctTd = tr.querySelector("td[data-price][data-basis]");
       if (pctTd) {
@@ -205,9 +287,9 @@
         const subsidyCell = row.cells[subsidyIdx];
         const subsidyInput = subsidyCell.querySelector("input[data-field='subsidy_amount']");
         if (subsidyInput) {
-          const currentValue = Number(subsidyInput.value || 0);
+          const currentValue = getSubsidyNumericValue(subsidyInput);
           if (storedSubsidyValue > 0 || currentValue === 0) {
-            subsidyInput.value = subsidyValue.toFixed(2);
+            setSubsidyInputValue(subsidyInput, subsidyValue.toFixed(2));
           }
         }
         subsidyCell.setAttribute('data-val', subsidyValue.toFixed(2));
@@ -641,12 +723,33 @@
         const input = targetSel && document.querySelector(targetSel);
         if (input) {
           try {
-            await navigator.clipboard?.writeText(String(input.value || ''));
+            await navigator.clipboard?.writeText(getSubsidySubmitValue(input));
             showToast();
           } catch (_) {}
         }
       }
     });
+    document.addEventListener('focusin', (e) => {
+      const input = e.target.closest("input[data-field='subsidy_amount']");
+      if (!input) return;
+      input.value = getSubsidyRawValue(input);
+    });
+    document.addEventListener('input', (e) => {
+      const input = e.target.closest("input[data-field='subsidy_amount']");
+      if (!input) return;
+      const normalized = normalizeCurrencyInputValue(input.value || '');
+      input.dataset.rawValue = normalized;
+      if ((input.value || '') !== normalized) {
+        input.value = normalized;
+      }
+      syncSubsidyCellValue(input);
+    });
+    document.addEventListener('blur', (e) => {
+      const input = e.target.closest("input[data-field='subsidy_amount']");
+      if (!input) return;
+      setSubsidyInputValue(input, getSubsidyRawValue(input));
+      syncSubsidyCellValue(input);
+    }, true);
     document.addEventListener('click', async (e) => {
       const acceptBtn = e.target.closest('.accept-once-btn');
       if (acceptBtn) {
@@ -755,7 +858,7 @@
         const id = actBtn.getAttribute('data-id');
         const action = actBtn.getAttribute('data-action');
         const subsidyInput = document.querySelector(`input[data-field="subsidy_amount"][data-id="${id}"]`);
-        const subsidy_amount = subsidyInput ? subsidyInput.value : '';
+        const subsidy_amount = getSubsidySubmitValue(subsidyInput);
         const post = (url, data) =>
           fetch(url, { method:'POST', headers:{'X-Requested-With':'XMLHttpRequest','Content-Type':'application/x-www-form-urlencoded'}, body:new URLSearchParams(data) });
 
@@ -827,7 +930,7 @@
     async function runBulkApprove(ids) {
       const reqs = ids.map(id => {
         const input = document.querySelector(`input[data-field="subsidy_amount"][data-id="${id}"]`);
-        const subsidy_amount = input ? input.value : '';
+        const subsidy_amount = getSubsidySubmitValue(input);
         const url = window.AASubsidyConfig.approveUrl.replace("/0/", `/${id}/`);
         return postForm(url, { subsidy_amount });
       });
@@ -836,7 +939,7 @@
     async function runBulkApproveWithComment(ids, comment) {
       const reqs = ids.map(id => {
         const input = document.querySelector(`input[data-field="subsidy_amount"][data-id="${id}"]`);
-        const subsidy_amount = input ? input.value : '';
+        const subsidy_amount = getSubsidySubmitValue(input);
         const url = window.AASubsidyConfig.approveUrl.replace("/0/", `/${id}/`);
         return postForm(url, { subsidy_amount, comment });
       });
@@ -845,7 +948,7 @@
     async function runBulkDeny(ids, reason) {
       const reqs = ids.map(id => {
         const input = document.querySelector(`input[data-field="subsidy_amount"][data-id="${id}"]`);
-        const subsidy_amount = input ? input.value : '';
+        const subsidy_amount = getSubsidySubmitValue(input);
         const url = window.AASubsidyConfig.denyUrl.replace("/0/", `/${id}/`);
         return postForm(url, { subsidy_amount, comment: reason });
       });
