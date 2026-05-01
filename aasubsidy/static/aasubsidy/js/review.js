@@ -235,6 +235,7 @@
       const score = Number(analysis.score || 0);
       const threshold = Number(window.AASubsidyConfig.closeMatchThreshold || 70.0);
       const warnings = Array.isArray(analysis.warnings) ? analysis.warnings : [];
+      const isManualAccept = analysis.match_source === 'manual_accept';
       const isAmbiguous = warnings.some(issue => issue && issue.code === 'ambiguous_match');
 
       // Simplified doctrine display
@@ -246,6 +247,8 @@
 
         if (!selectedName || selectedName === 'No Match') {
           doctrineHtml = '<div class="text-muted">No Match</div>';
+        } else if (isManualAccept) {
+          doctrineHtml = `<div class="text-success">Accepted once: ${escapeHtml(selectedName)}</div>`;
         } else if (isAmbiguous) {
           doctrineHtml = `<div class="text-warning">Ambiguous: ${escapeHtml(selectedName)}</div>`;
         } else if (analysis.match_status === 'needs_review') {
@@ -387,21 +390,25 @@
             const showValidation = Boolean(analysis && analysis.selected_fit_name);
             let summaryHtml = '';
             if (showValidation) {
+                const isManualAccept = analysis.match_source === 'manual_accept';
                 const statusClass = analysis.match_status === 'matched'
                     ? 'text-success'
                     : (analysis.match_status === 'needs_review' ? 'text-warning' : 'text-danger');
                 const sourceLabel = formatMatchSource(analysis.match_source);
-                const statusLabel = formatMatchStatus(analysis.match_status);
+                const statusLabel = isManualAccept ? 'Accepted once' : formatMatchStatus(analysis.match_status);
                 const candidateText = (analysis.candidates || [])
                     .slice(0, 3)
                     .map(candidate => `${candidate.fit_name} (${candidate.score.toFixed ? candidate.score.toFixed(2) : candidate.score})`)
                     .join(', ');
                 const failureSummary = renderIssueSummary(analysis.hard_failures, 'Rejected Because', 'text-danger');
-                const warningSummary = renderIssueSummary(analysis.warnings, 'Warnings', 'text-warning');
+                const warningSummary = isManualAccept ? '' : renderIssueSummary(analysis.warnings, 'Warnings', 'text-warning');
                 const scoringDetails = analysis.scoring_details || {};
                 const pointsEarned = scoringDetails.points_earned !== undefined ? scoringDetails.points_earned.toFixed(1) : '';
                 const expectedItems = scoringDetails.expected_items || '';
                 const scoreBreakdown = pointsEarned && expectedItems ? ` (${pointsEarned}/${expectedItems})` : '';
+                const acceptedNotice = isManualAccept
+                    ? '<div class="mt-2 text-success fw-semibold">This contract has been accepted once and can be reviewed as accepted.</div>'
+                    : '';
 
                 summaryHtml = `
                     <div class="px-3 py-2 small border-bottom border-secondary">
@@ -417,6 +424,7 @@
                                 ${analysis.can_undo_accept_once ? `<button type="button" class="btn btn-sm btn-outline-warning undo-accept-once-btn" data-contract="${id}">${window.AASubsidyConfig.lang.undoAcceptOnce}</button>` : ''}
                             </div>
                         </div>
+                        ${acceptedNotice}
                         ${candidateText ? `<div class="mt-2 text-muted">Candidates: ${candidateText}</div>` : ''}
                         ${failureSummary}
                         ${warningSummary}

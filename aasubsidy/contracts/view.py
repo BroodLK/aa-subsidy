@@ -199,6 +199,7 @@ def _serialize_match_result(result, *, include_items: bool = False) -> dict:
         "hard_failures": result.hard_failures or [],
         "candidates": evidence.get("candidates", []),
         "pricing": evidence.get("pricing") or {},
+        "evidence": evidence,
     }
     if include_items:
         payload["items"] = evidence.get("item_rows", [])
@@ -1055,7 +1056,6 @@ class ContractItemsView(PermissionRequiredMixin, View):
         )
 
         # Check if we can undo an accept_once decision
-        decision = analysis.get("evidence", {}).get("decision", {})
-        analysis["can_undo_accept_once"] = decision.get("decision") == "accept_once"
+        analysis["can_undo_accept_once"] = analysis.get("match_source") == "manual_accept"
 
         return JsonResponse({"ok": True, "items": items, "analysis": analysis})

@@ -158,12 +158,15 @@ def reviewer_table(start: datetime, end: datetime, corporation_id: int | None = 
         # Simplified doctrine display
         score = float(result.score or 0) if result else 0
         close_match_threshold = float(cfg_model.close_match_threshold or 70.0)
+        is_manual_accept = bool(result and result.match_source == "manual_accept")
         is_ambiguous = bool(
             result
             and any(issue.get("code") == "ambiguous_match" for issue in result.warnings)
         )
         if not result or selected_name == "No Match":
             doctrine_html = '<div class="text-muted">No Match</div>'
+        elif is_manual_accept:
+            doctrine_html = f'<div class="text-success">Accepted once: {selected_name}</div>'
         elif is_ambiguous:
             doctrine_html = f'<div class="text-warning">Ambiguous: {selected_name}</div>'
         elif result.match_status == "needs_review":
