@@ -134,7 +134,7 @@ class TestDoctrineMatching(unittest.TestCase):
                 ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
                 ItemRuleData(500, "T2 Module", expected_quantity=1),
             ],
-            substitutions=[SubstitutionRuleData(expected_type_id=500, allowed_type_id=501, rule_type="specific", penalty_points=Decimal("4.00"))],
+            substitutions=[SubstitutionRuleData(expected_type_id=500, allowed_type_id=501, rule_type="specific", penalty_points=Decimal("1.00"))],
             type_info={
                 100: TypeInfo(100, "Hull"),
                 500: TypeInfo(500, "T2 Module", group_id=10),
@@ -152,6 +152,34 @@ class TestDoctrineMatching(unittest.TestCase):
         self.assertTrue(any(issue["code"] == "substitution" for issue in result.warnings))
         self.assertEqual(result.score, Decimal("50.00"))
         self.assertEqual(result.source_hint, "learned_rule")
+
+    def test_specific_substitute_with_zero_penalty_is_not_scored_down(self):
+        fit = _fit_definition(
+            rules=[
+                ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
+                ItemRuleData(500, "Domination EM Armor Hardener", expected_quantity=1),
+            ],
+            substitutions=[SubstitutionRuleData(expected_type_id=500, allowed_type_id=501, rule_type="specific", penalty_points=Decimal("0.00"))],
+            type_info={
+                100: TypeInfo(100, "Hull"),
+                500: TypeInfo(500, "Domination EM Armor Hardener", group_id=20),
+                501: TypeInfo(501, "True Sansha EM Armor Hardener", group_id=20),
+            },
+        )
+        contract = {
+            100: ContractItemData(100, "Hull", included_qty=1),
+            501: ContractItemData(501, "True Sansha EM Armor Hardener", included_qty=1, group_id=20),
+        }
+
+        result = evaluate_contract_against_definition(contract, fit)
+        item_rows = result.evidence["item_rows"]
+
+        self.assertEqual(result.score, Decimal("100.00"))
+        self.assertEqual(result.warnings, [])
+        self.assertTrue(all(
+            not any(action == "specific_substitute" or (isinstance(action, dict) and action.get("name") == "specific_substitute") for action in row["actions"])
+            for row in item_rows
+        ))
 
     def test_missing_and_extra_with_matching_metadata_offer_substitution_flow(self):
         fit = _fit_definition(

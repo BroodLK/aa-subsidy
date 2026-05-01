@@ -602,27 +602,30 @@ def evaluate_contract_against_definition(
                     remaining.pop(actual_type_id, None)
                 substitute_qty += use_qty
 
-                # Substitutions now cost -1 point
-                penalty_points += Decimal("1.00")
-                exact_match = False
+                penalty = matched_rule.penalty_points if matched_rule is not None else implicit_penalty
+                penalty = _decimal(penalty)
+                if penalty > ZERO:
+                    penalty_points += penalty
+                    exact_match = False
                 used_learned_rule = True
 
                 applied_substitutions.append({
                     "type_id": actual_info.type_id,
                     "name": actual_info.name,
                     "qty": use_qty,
-                    "penalty_points": 1.0,
+                    "penalty_points": float(penalty),
                     "rule_type": matched_rule.rule_type if matched_rule else "profile_variant",
                 })
-                warnings.append(_issue(
-                    "warning",
-                    "substitution",
-                    f"{expected_type.name} matched with {actual_info.name}.",
-                    expected_type_id=expected_type.type_id,
-                    actual_type_id=actual_info.type_id,
-                    quantity=use_qty,
-                    fitting_id=fitting.fitting_id,
-                ))
+                if penalty > ZERO:
+                    warnings.append(_issue(
+                        "warning",
+                        "substitution",
+                        f"{expected_type.name} matched with {actual_info.name}.",
+                        expected_type_id=expected_type.type_id,
+                        actual_type_id=actual_info.type_id,
+                        quantity=use_qty,
+                        fitting_id=fitting.fitting_id,
+                    ))
 
         actual_qty = exact_qty + substitute_qty
         if exact_qty > 0:
@@ -711,9 +714,6 @@ def evaluate_contract_against_definition(
                         fitting_id=fitting.fitting_id,
                     ))
                     actions.append("quantity_tolerance")
-
-        if applied_substitutions and "specific_substitute" not in actions:
-            actions.append("specific_substitute")
 
         item_rows.append(_row(
             expected_type_id=rule.expected_type_id,

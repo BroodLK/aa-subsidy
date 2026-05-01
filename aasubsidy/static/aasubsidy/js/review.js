@@ -468,7 +468,7 @@
                     });
                     const title = actionObj.title ? ` title="${escapeHtml(actionObj.title)}"` : '';
                     const label = actionObj.label || labels[actionName] || actionName;
-                    return `<button type="button" class="btn btn-sm btn-outline-primary create-rule-btn" data-contract="${id}" data-payload="${encodeURIComponent(params.toString())}"${title}>${escapeHtml(label)}</button>`;
+                    return `<button type="button" class="btn btn-sm btn-outline-light create-rule-btn" data-contract="${id}" data-payload="${encodeURIComponent(params.toString())}"${title}>${escapeHtml(label)}</button>`;
                 }).join('') + '</div>';
             };
 

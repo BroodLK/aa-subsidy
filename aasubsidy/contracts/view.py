@@ -912,15 +912,18 @@ class CreateRuleView(PermissionRequiredMixin, View):
         elif action == "specific_substitute":
             if not expected_type_id or not actual_type_id:
                 return JsonResponse({"ok": False, "error": "substitute_types_required"}, status=400)
-            DoctrineSubstitutionRule.objects.get_or_create(
+            rule, _ = DoctrineSubstitutionRule.objects.get_or_create(
                 profile=profile,
                 expected_type_id=expected_type_id,
                 allowed_type_id=actual_type_id,
                 defaults={
                     "rule_type": DoctrineSubstitutionRule.RULE_SPECIFIC,
-                    "penalty_points": Decimal("2.00"),
+                    "penalty_points": Decimal("0.00"),
                 },
             )
+            rule.rule_type = DoctrineSubstitutionRule.RULE_SPECIFIC
+            rule.penalty_points = Decimal("0.00")
+            rule.save(update_fields=["rule_type", "penalty_points"])
         elif action == "quantity_tolerance":
             if not expected_type_id or expected_qty <= 0:
                 return JsonResponse({"ok": False, "error": "quantity_context_required"}, status=400)
