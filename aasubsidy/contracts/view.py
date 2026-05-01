@@ -199,6 +199,7 @@ def _serialize_match_result(result, *, include_items: bool = False) -> dict:
         "hard_failures": result.hard_failures or [],
         "candidates": evidence.get("candidates", []),
         "pricing": evidence.get("pricing") or {},
+        "approved_substitutions": evidence.get("approved_substitutions", []),
         "evidence": evidence,
     }
     if include_items:

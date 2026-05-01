@@ -128,13 +128,13 @@ class TestDoctrineMatching(unittest.TestCase):
         self.assertTrue(any(issue["code"] == "consumable_quantity_tolerance" for issue in result.warnings))
         self.assertEqual(result.score, Decimal("75.00"))
 
-    def test_specific_substitute_matches_with_penalty(self):
+    def test_group_substitute_matches_with_penalty(self):
         fit = _fit_definition(
             rules=[
                 ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
                 ItemRuleData(500, "T2 Module", expected_quantity=1),
             ],
-            substitutions=[SubstitutionRuleData(expected_type_id=500, allowed_type_id=501, rule_type="specific", penalty_points=Decimal("1.00"))],
+            substitutions=[SubstitutionRuleData(expected_type_id=500, rule_type="group", penalty_points=Decimal("1.00"))],
             type_info={
                 100: TypeInfo(100, "Hull"),
                 500: TypeInfo(500, "T2 Module", group_id=10),
@@ -176,6 +176,9 @@ class TestDoctrineMatching(unittest.TestCase):
 
         self.assertEqual(result.score, Decimal("100.00"))
         self.assertEqual(result.warnings, [])
+        self.assertTrue(any(issue["code"] == "approved_substitution" for issue in result.evidence["approved_substitutions"]))
+        matching_row = next(row for row in item_rows if row["expected_type_id"] == 500)
+        self.assertEqual(matching_row["reason"], "Approved substitute: True Sansha EM Armor Hardener.")
         self.assertTrue(all(
             not any(action == "specific_substitute" or (isinstance(action, dict) and action.get("name") == "specific_substitute") for action in row["actions"])
             for row in item_rows
@@ -259,6 +262,46 @@ class TestDoctrineMatching(unittest.TestCase):
         self.assertEqual(em_targets, [501])
         self.assertEqual(thermal_targets, [601])
 
+    def test_drone_category_items_offer_substitution_flow_even_with_different_groups(self):
+        fit = _fit_definition(
+            rules=[
+                ItemRuleData(100, "Hull", expected_quantity=1, category="hull", is_hull=True, sort_order=-1000),
+                ItemRuleData(700, "Hornet EC-300", expected_quantity=5),
+            ],
+            type_info={
+                100: TypeInfo(100, "Hull"),
+                700: TypeInfo(700, "Hornet EC-300", category_id=18, group_id=201),
+            },
+        )
+        contract = {
+            100: ContractItemData(100, "Hull", included_qty=1),
+            701: ContractItemData(701, "Warrior II", included_qty=5, category_id=18, group_id=202),
+        }
+
+        result = evaluate_contract_against_definition(contract, fit)
+        item_rows = result.evidence["item_rows"]
+        missing_row = next(row for row in item_rows if row["expected_type_id"] == 700)
+        extra_row = next(row for row in item_rows if row["actual_type_id"] == 701)
+
+        self.assertTrue(
+            any(
+                isinstance(action, dict)
+                and action.get("name") == "specific_substitute"
+                and action.get("expected_type_id") == 700
+                and action.get("actual_type_id") == 701
+                for action in missing_row["actions"]
+            )
+        )
+        self.assertTrue(
+            any(
+                isinstance(action, dict)
+                and action.get("name") == "specific_substitute"
+                and action.get("expected_type_id") == 700
+                and action.get("actual_type_id") == 701
+                for action in extra_row["actions"]
+            )
+        )
+
     def test_forced_fit_and_rerun_keep_same_analysis(self):
         fit = _fit_definition(
             rules=[
@@ -282,8 +325,8 @@ class TestDoctrineMatching(unittest.TestCase):
         rerun = _select_result(contract_id=1, candidates=[candidate], forced_fit_id=None, manual_decision=None)
 
         self.assertEqual(forced.matched_fitting_id, 1)
-        self.assertIsNone(rerun.matched_fitting_id)
-        self.assertEqual(rerun.evidence["selected_fit_name"], "Test Fit")
+        self.assertEqual(rerun.matched_fitting_id, 1)
+        self.assertEqual(rerun.matched_fitting_name, "Test Fit")
         self.assertEqual(forced.score, rerun.score)
         self.assertEqual(forced.hard_failures, rerun.hard_failures)
         self.assertEqual(forced.warnings, rerun.warnings)

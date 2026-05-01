@@ -400,8 +400,10 @@
                     .slice(0, 3)
                     .map(candidate => `${candidate.fit_name} (${candidate.score.toFixed ? candidate.score.toFixed(2) : candidate.score})`)
                     .join(', ');
+                const approvedSubstitutions = Array.isArray(analysis.approved_substitutions) ? analysis.approved_substitutions : [];
                 const failureSummary = renderIssueSummary(analysis.hard_failures, 'Rejected Because', 'text-danger');
                 const warningSummary = isManualAccept ? '' : renderIssueSummary(analysis.warnings, 'Warnings', 'text-warning');
+                const approvedSummary = renderIssueSummary(approvedSubstitutions, 'Approved Substitutions', 'text-info');
                 const scoringDetails = analysis.scoring_details || {};
                 const pointsEarned = scoringDetails.points_earned !== undefined ? scoringDetails.points_earned.toFixed(1) : '';
                 const expectedItems = scoringDetails.expected_items || '';
@@ -427,6 +429,7 @@
                         ${acceptedNotice}
                         ${candidateText ? `<div class="mt-2 text-muted">Candidates: ${candidateText}</div>` : ''}
                         ${failureSummary}
+                        ${approvedSummary}
                         ${warningSummary}
                     </div>
                 `;

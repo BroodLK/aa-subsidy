@@ -10,13 +10,15 @@ from typing import Any, Iterable
 
 MAX_SCORE = Decimal("100.00")
 ZERO = Decimal("0.00")
-MATCH_ENGINE_VERSION = 7
+MATCH_ENGINE_VERSION = 8
+DRONE_CATEGORY_ID = 18
 
 
 @dataclass(slots=True)
 class TypeInfo:
     type_id: int
     name: str
+    category_id: int | None = None
     group_id: int | None = None
     market_group_id: int | None = None
     meta_level: int | None = None
@@ -30,6 +32,7 @@ class ContractItemData:
     name: str
     included_qty: int = 0
     excluded_qty: int = 0
+    category_id: int | None = None
     group_id: int | None = None
     market_group_id: int | None = None
     meta_level: int | None = None
@@ -223,6 +226,7 @@ def _type_info_from_contract_item(item: ContractItemData | None) -> TypeInfo | N
     return TypeInfo(
         type_id=int(item.type_id),
         name=item.name,
+        category_id=item.category_id,
         group_id=item.group_id,
         market_group_id=item.market_group_id,
         meta_level=item.meta_level,
@@ -295,11 +299,16 @@ def _maybe_add_substitution_suggestions(
 
             meta_rank = 0
             if expected_info.group_id and actual_info.group_id and expected_info.group_id == actual_info.group_id:
-                meta_rank = 2
+                meta_rank = 3
             elif (
                 expected_info.market_group_id
                 and actual_info.market_group_id
                 and expected_info.market_group_id == actual_info.market_group_id
+            ):
+                meta_rank = 2
+            elif (
+                expected_info.category_id == DRONE_CATEGORY_ID
+                and actual_info.category_id == DRONE_CATEGORY_ID
             ):
                 meta_rank = 1
             if meta_rank <= 0:
@@ -514,6 +523,7 @@ def evaluate_contract_against_definition(
 
     hard_failures: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
+    approved_substitutions: list[dict[str, Any]] = []
     item_rows: list[dict[str, Any]] = []
     exact_match = True
     used_learned_rule = False
@@ -602,7 +612,10 @@ def evaluate_contract_against_definition(
                     remaining.pop(actual_type_id, None)
                 substitute_qty += use_qty
 
-                penalty = matched_rule.penalty_points if matched_rule is not None else implicit_penalty
+                if matched_rule is not None and matched_rule.rule_type == "specific":
+                    penalty = ZERO
+                else:
+                    penalty = matched_rule.penalty_points if matched_rule is not None else implicit_penalty
                 penalty = _decimal(penalty)
                 if penalty > ZERO:
                     penalty_points += penalty
@@ -621,6 +634,16 @@ def evaluate_contract_against_definition(
                         "warning",
                         "substitution",
                         f"{expected_type.name} matched with {actual_info.name}.",
+                        expected_type_id=expected_type.type_id,
+                        actual_type_id=actual_info.type_id,
+                        quantity=use_qty,
+                        fitting_id=fitting.fitting_id,
+                    ))
+                else:
+                    approved_substitutions.append(_issue(
+                        "info",
+                        "approved_substitution",
+                        f"{expected_type.name} matched with approved substitute {actual_info.name}.",
                         expected_type_id=expected_type.type_id,
                         actual_type_id=actual_info.type_id,
                         quantity=use_qty,
@@ -714,6 +737,14 @@ def evaluate_contract_against_definition(
                         fitting_id=fitting.fitting_id,
                     ))
                     actions.append("quantity_tolerance")
+
+        if applied_substitutions and status == "ok":
+            approved_names = [item["name"] for item in applied_substitutions if float(item.get("penalty_points") or 0) <= 0]
+            if approved_names:
+                if len(approved_names) == 1:
+                    reason = f"Approved substitute: {approved_names[0]}."
+                else:
+                    reason = f"Approved substitutes: {', '.join(approved_names)}."
 
         item_rows.append(_row(
             expected_type_id=rule.expected_type_id,
@@ -813,6 +844,7 @@ def evaluate_contract_against_definition(
         },
         "item_rows": item_rows,
         "substitutions": [warning for warning in warnings if warning.get("code") == "substitution"],
+        "approved_substitutions": approved_substitutions,
         "scoring_details": {
             "expected_items": expected_items,
             "penalty_points": float(penalty_points),
@@ -1461,6 +1493,7 @@ def _type_info_from_obj(obj: Any) -> TypeInfo:
     return TypeInfo(
         type_id=int(getattr(obj, "id")),
         name=getattr(obj, "name", str(getattr(obj, "id"))),
+        category_id=_attr(obj, ("category_id", "eve_category_id", "category_fk_id")),
         group_id=_attr(obj, ("group_id", "eve_group_id", "group_fk_id")),
         market_group_id=_attr(obj, ("market_group_id", "eve_market_group_id")),
         meta_level=_attr(obj, ("meta_level",)),
@@ -1826,6 +1859,7 @@ def match_contracts(
             item = ContractItemData(
                 type_id=type_id,
                 name=getattr(eve_type, "name", None) or str(type_id),
+                category_id=_attr(eve_type, ("category_id", "eve_category_id", "category_fk_id")),
                 group_id=_attr(eve_type, ("group_id", "eve_group_id", "group_fk_id")),
                 market_group_id=_attr(eve_type, ("market_group_id", "eve_market_group_id")),
                 meta_level=_attr(eve_type, ("meta_level",)),
