@@ -40,7 +40,20 @@ SITE_NAME = "testauth"
 DEBUG = False
 
 
-LOGGING = False
+## Insert AASubsidy's logging into Django Logging config
+LOGGING['handlers']['subsidy_log_file'] = {
+    'level': 'INFO',
+    'class': 'logging.handlers.RotatingFileHandler',
+    'filename': os.path.join(BASE_DIR, 'log/aasubsidy.log'),
+    'formatter': 'verbose',
+    'maxBytes': 1024 * 1024 * 5,
+    'backupCount': 5,
+}
+LOGGING['loggers']['aasubsidy'] = {
+    'handlers': ['subsidy_log_file'],
+    'level': 'DEBUG'
+}
+
 NOTIFICATIONS_REFRESH_TIME = 30
 NOTIFICATIONS_MAX_PER_USER = 50
 

@@ -565,8 +565,18 @@ def _sync_single_corporate_contract_item_via_esi(
 
 
 def _sync_corporate_contracts_via_esi(corporation_id: int, *, force_refresh: bool = False) -> dict:
+    logger.info(
+        "Starting ESI contract sync for corporation %s (force_refresh=%s)",
+        corporation_id,
+        force_refresh,
+    )
     try:
         audit_corp = _get_corporation_audit(corporation_id)
+        logger.debug(
+            "Found CorporationAudit for corporation %s: last_update_contracts=%s",
+            corporation_id,
+            getattr(audit_corp, "last_update_contracts", None),
+        )
     except CorporationAudit.DoesNotExist:
         logger.warning(
             "Skipping direct ESI contract sync for corporation %s: no matching CorporationAudit row exists.",
@@ -581,9 +591,15 @@ def _sync_corporate_contracts_via_esi(corporation_id: int, *, force_refresh: boo
         }
 
     try:
+        logger.debug("Fetching contracts from ESI for corporation %s", corporation_id)
         contracts, token = _fetch_corporation_contracts_from_esi(
             corporation_id,
             force_refresh=force_refresh,
+        )
+        logger.info(
+            "Fetched %s contracts from ESI for corporation %s",
+            len(contracts),
+            corporation_id,
         )
     except (ESIBucketLimitException, ESIErrorLimitException) as exc:
         if force_refresh:
@@ -715,6 +731,13 @@ def _sync_corporate_contracts_via_esi(corporation_id: int, *, force_refresh: boo
         .distinct()
     )
 
+    logger.debug(
+        "Corporation %s has %s existing contracts, %s with items already synced",
+        corporation_id,
+        len(existing_contract_ids),
+        len(existing_item_contract_ids),
+    )
+
     contracts_to_create: list[CorporateContract] = []
     contracts_to_update: list[CorporateContract] = []
     contracts_by_id: dict[int, CorporateContract] = {}
@@ -765,12 +788,21 @@ def _sync_corporate_contracts_via_esi(corporation_id: int, *, force_refresh: boo
         if contract.status.lower() == "deleted":
             deleted_contract_pks.append(contract.id)
 
+    logger.info(
+        "Corporation %s: %s new contracts to create, %s to update, %s deleted",
+        corporation_id,
+        len(contracts_to_create),
+        len(contracts_to_update),
+        len(deleted_contract_pks),
+    )
+
     if contracts_to_create:
         CorporateContract.objects.bulk_create(
             contracts_to_create,
             batch_size=1000,
             ignore_conflicts=True,
         )
+        logger.debug("Created %s new contracts", len(contracts_to_create))
 
     if contracts_to_update:
         CorporateContract.objects.bulk_update(
@@ -804,10 +836,13 @@ def _sync_corporate_contracts_via_esi(corporation_id: int, *, force_refresh: boo
             ],
             batch_size=1000,
         )
+        logger.debug("Updated %s contracts", len(contracts_to_update))
 
     if deleted_contract_pks:
-        CorporateContractItem.objects.filter(contract_id__in=deleted_contract_pks).delete()
+        deleted_count = CorporateContractItem.objects.filter(contract_id__in=deleted_contract_pks).delete()
+        logger.debug("Deleted items for %s deleted contracts: %s", len(deleted_contract_pks), deleted_count)
 
+    logger.info("Starting item sync for %s contracts", len(contracts_by_id))
     item_result = _sync_corporate_contract_items_via_esi(
         corporation_id=corporation_id,
         contracts_by_id=contracts_by_id,
