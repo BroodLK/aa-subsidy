@@ -1,8 +1,8 @@
 from django.core.management.base import BaseCommand
 from eveuniverse.models import EveSolarSystem, EveStation
-import logging
+from allianceauth.services.hooks import get_extension_logger
 
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 
 class Command(BaseCommand):
     help = 'Load necessary eveuniverse data for aa-subsidy (Solar Systems and Stations)'

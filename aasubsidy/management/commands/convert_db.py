@@ -1,9 +1,10 @@
-import logging
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
+
+from allianceauth.services.hooks import get_extension_logger
 
 from aasubsidy.tasks import (
     sync_fitting_requests,
@@ -17,7 +18,7 @@ import csv
 import json
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 
 
 class Command(BaseCommand):

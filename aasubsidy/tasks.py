@@ -245,9 +245,20 @@ def _fetch_corporation_contracts_from_esi(
     client = _esi_contract_client()
     tokens = _get_corporation_contract_tokens(corporation_id)
     if not tokens:
+        logger.error(
+            "No ESI tokens found with scope %s for corporation %s",
+            ESI_CONTRACT_SCOPE,
+            corporation_id,
+        )
         raise RuntimeError(
             f"No ESI token with scope {ESI_CONTRACT_SCOPE} is available for corporation {corporation_id}."
         )
+
+    logger.debug(
+        "Found %s valid ESI tokens for corporation %s",
+        len(tokens),
+        corporation_id,
+    )
 
     last_error: Exception | None = None
     for token in tokens:
@@ -259,13 +270,28 @@ def _fetch_corporation_contracts_from_esi(
             return list(contracts), token
         except HTTPClientError as exc:
             if getattr(exc, "status_code", None) in {401, 403}:
+                logger.debug(
+                    "Token authentication failed for corporation %s (status %s), trying next token",
+                    corporation_id,
+                    getattr(exc, "status_code", None),
+                )
                 last_error = exc
                 continue
             raise
         except TokenError as exc:
+            logger.debug(
+                "Token error for corporation %s: %s, trying next token",
+                corporation_id,
+                exc,
+            )
             last_error = exc
             continue
 
+    logger.error(
+        "All tokens failed for corporation %s. Last error: %s",
+        corporation_id,
+        last_error,
+    )
     raise last_error or RuntimeError(
         f"Unable to authenticate a corporation contract token for corporation {corporation_id}."
     )
@@ -345,9 +371,20 @@ def _sync_corporate_contract_items_via_esi(
             continue
         contracts_to_sync.append((contract_id, contract))
 
+    logger.info(
+        "Item sync: %s contracts need syncing, %s already have items (reusing), batch size limit: %s",
+        len(contracts_to_sync),
+        len(matchable_contract_ids),
+        ESI_CONTRACT_ITEM_SYNC_BATCH_SIZE,
+    )
+
     if len(contracts_to_sync) > ESI_CONTRACT_ITEM_SYNC_BATCH_SIZE:
         deferred_contracts = len(contracts_to_sync) - ESI_CONTRACT_ITEM_SYNC_BATCH_SIZE
         contracts_to_sync = contracts_to_sync[:ESI_CONTRACT_ITEM_SYNC_BATCH_SIZE]
+        logger.info(
+            "Deferring %s contracts to next sync (batch size limit reached)",
+            deferred_contracts,
+        )
 
     for position, (contract_id, contract) in enumerate(contracts_to_sync):
 
@@ -423,6 +460,11 @@ def _sync_corporate_contract_items_via_esi(
 
         type_ids = _unique_positive_ids(_esi_value(item, "type_id") for item in items)
         if type_ids:
+            logger.debug(
+                "Contract %s: Ensuring %s item types exist in database",
+                contract_id,
+                len(type_ids),
+            )
             _ensure_eve_item_types_via_esi(type_ids)
 
         new_items: list[CorporateContractItem] = []
@@ -456,9 +498,18 @@ def _sync_corporate_contract_items_via_esi(
             contracts_with_items += 1
             matchable_contract_ids.add(contract_id)
             existing_item_contract_ids.add(contract_id)
+            logger.debug(
+                "Contract %s: Successfully synced %s items",
+                contract_id,
+                len(new_items),
+            )
         else:
             contracts_without_items += 1
             existing_item_contract_ids.discard(contract_id)
+            logger.debug(
+                "Contract %s: No items found (empty contract)",
+                contract_id,
+            )
 
     return {
         "items_synced": items_synced,
@@ -1104,6 +1155,13 @@ def import_corporate_contract_reviews(
 ) -> dict:
     """Imports contract subsidies idempotently; refreshes contracts optionally; exempts qualifying records"""
     corporation_id = _effective_corporation_id(corporation_id)
+
+    logger.info(
+        "Starting import_corporate_contract_reviews for corporation %s (force_refresh=%s, match=%s)",
+        corporation_id,
+        force_refresh_contracts,
+        match_contracts_on_import,
+    )
 
     refresh_result = {"attempted": False, "ok": False}
     if force_refresh_contracts:
