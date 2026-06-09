@@ -244,3 +244,4 @@
 /.codex_tmp/zstandard-0.25.0-cp312-cp312-win_amd64.whl
 /LOGGING_SETUP.md
 /test_logging.py
+/LOGGING_COVERAGE.md
