@@ -41,6 +41,12 @@ DEBUG = False
 
 
 ## Insert AASubsidy's logging into Django Logging config
+# Ensure LOGGING dict structure exists
+if 'handlers' not in LOGGING:
+    LOGGING['handlers'] = {}
+if 'loggers' not in LOGGING:
+    LOGGING['loggers'] = {}
+
 LOGGING['handlers']['subsidy_log_file'] = {
     'level': 'INFO',
     'class': 'logging.handlers.RotatingFileHandler',
@@ -49,9 +55,10 @@ LOGGING['handlers']['subsidy_log_file'] = {
     'maxBytes': 1024 * 1024 * 5,
     'backupCount': 5,
 }
-LOGGING['loggers']['aasubsidy'] = {
+LOGGING['loggers']['extensions.aasubsidy'] = {
     'handlers': ['subsidy_log_file'],
-    'level': 'DEBUG'
+    'level': 'DEBUG',
+    'propagate': False,
 }
 
 NOTIFICATIONS_REFRESH_TIME = 30
