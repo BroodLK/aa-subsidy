@@ -1,0 +1,399 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AA Subsidy Bundled ESI Subset",
+    "version": "2025-08-26"
+  },
+  "servers": [
+    {
+      "url": "https://esi.evetech.net"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Contracts"
+    },
+    {
+      "name": "Universe"
+    }
+  ],
+  "paths": {
+    "/corporations/{corporation_id}/contracts": {
+      "get": {
+        "operationId": "GetCorporationsCorporationIdContracts",
+        "tags": [
+          "Contracts"
+        ],
+        "parameters": [
+          {
+            "name": "corporation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "security": [
+          {
+            "OAuth2": [
+              "esi-contracts.read_corporation_contracts.v1"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Corporate contracts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorporationContracts"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/corporations/{corporation_id}/contracts/{contract_id}/items": {
+      "get": {
+        "operationId": "GetCorporationsCorporationIdContractsContractIdItems",
+        "tags": [
+          "Contracts"
+        ],
+        "parameters": [
+          {
+            "name": "corporation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "contract_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "security": [
+          {
+            "OAuth2": [
+              "esi-contracts.read_corporation_contracts.v1"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Corporate contract items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorporationContractItems"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/universe/categories/{category_id}": {
+      "get": {
+        "operationId": "GetUniverseCategoriesCategoryId",
+        "tags": [
+          "Universe"
+        ],
+        "parameters": [
+          {
+            "name": "category_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Universe category",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UniverseCategory"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/universe/groups/{group_id}": {
+      "get": {
+        "operationId": "GetUniverseGroupsGroupId",
+        "tags": [
+          "Universe"
+        ],
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Universe group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UniverseGroup"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/universe/types/{type_id}": {
+      "get": {
+        "operationId": "GetUniverseTypesTypeId",
+        "tags": [
+          "Universe"
+        ],
+        "parameters": [
+          {
+            "name": "type_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Universe type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UniverseType"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "OAuth2": {
+        "type": "oauth2",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://login.eveonline.com/v2/oauth/authorize",
+            "tokenUrl": "https://login.eveonline.com/v2/oauth/token",
+            "scopes": {
+              "esi-contracts.read_corporation_contracts.v1": "Read corporate contracts"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "CorporationContracts": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/CorporationContract"
+        }
+      },
+      "CorporationContract": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "acceptor_id": {
+            "type": "integer"
+          },
+          "assignee_id": {
+            "type": "integer"
+          },
+          "availability": {
+            "type": "string"
+          },
+          "buyout": {
+            "type": "number"
+          },
+          "collateral": {
+            "type": "number"
+          },
+          "contract_id": {
+            "type": "integer"
+          },
+          "date_accepted": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "date_completed": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "date_expired": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "date_issued": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "days_to_complete": {
+            "type": "integer"
+          },
+          "end_location_id": {
+            "type": "integer"
+          },
+          "for_corporation": {
+            "type": "boolean"
+          },
+          "issuer_corporation_id": {
+            "type": "integer"
+          },
+          "issuer_id": {
+            "type": "integer"
+          },
+          "price": {
+            "type": "number"
+          },
+          "reward": {
+            "type": "number"
+          },
+          "start_location_id": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "volume": {
+            "type": "number"
+          }
+        }
+      },
+      "CorporationContractItems": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/CorporationContractItem"
+        }
+      },
+      "CorporationContractItem": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "is_included": {
+            "type": "boolean"
+          },
+          "is_singleton": {
+            "type": "boolean"
+          },
+          "quantity": {
+            "type": "integer"
+          },
+          "raw_quantity": {
+            "type": "integer"
+          },
+          "record_id": {
+            "type": "integer"
+          },
+          "type_id": {
+            "type": "integer"
+          }
+        }
+      },
+      "UniverseCategory": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "UniverseGroup": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "category_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "UniverseType": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "group_id": {
+            "type": "integer"
+          },
+          "mass": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "packaged_volume": {
+            "type": "number"
+          },
+          "portion_size": {
+            "type": "integer"
+          },
+          "published": {
+            "type": "boolean"
+          },
+          "radius": {
+            "type": "number"
+          },
+          "volume": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}

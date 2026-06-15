@@ -1,5 +1,6 @@
 from datetime import datetime
 from functools import lru_cache
+from pathlib import Path
 
 from celery import shared_task
 from django.db import transaction
@@ -19,19 +20,29 @@ from corptools.models import (
     EveName,
 )
 from esi.errors import TokenError
-from esi.exceptions import ESIErrorLimitException, ESIBucketLimitException, HTTPClientError, HTTPNotModified
+from esi.exceptions import (
+    ESIErrorLimitException,
+    ESIBucketLimitException,
+    HTTPClientError,
+    HTTPNotModified,
+)
 from esi.models import Token
 from esi.openapi_clients import ESIClientProvider
 
-from . import __title__, __version__
+from . import __title__, __version__, app_settings
 from .contracts.filters import apply_contract_exclusions
 from .contracts.matching import match_contracts
 from .helpers.contract_import import plan_claim_clearance
 from .helpers.services_update import update_all_prices
-from .models import SubsidyConfig, SubsidyItemPrice
 from fittings.models import Fitting
-from .models import FittingRequest
-from .models import CorporateContractSubsidy, FittingClaim, FittingClaimAutoClearance
+from .models import (
+    CorporateContractSubsidy,
+    FittingClaim,
+    FittingClaimAutoClearance,
+    FittingRequest,
+    SubsidyConfig,
+    SubsidyItemPrice,
+)
 
 logger = get_extension_logger(__name__)
 
@@ -39,6 +50,7 @@ DEFAULT_SUBSIDY_CORPORATION_ID = 98660859
 ESI_CONTRACT_SCOPE = "esi-contracts.read_corporation_contracts.v1"
 ESI_CONTRACT_ITEM_TYPES_BATCH_SIZE = 1000
 ESI_CONTRACT_ITEM_SYNC_BATCH_SIZE = 50
+ESI_OPENAPI_SPEC_FILE = Path(__file__).resolve().with_name("esi_openapi.json")
 
 try:
     from eveuniverse.models import EveType, EveMarketPrice
@@ -62,9 +74,10 @@ def _exclude_review_locked_contracts(queryset):
 @lru_cache(maxsize=1)
 def _esi_contract_client():
     return ESIClientProvider(
-        compatibility_date=timezone.now().date(),
+        compatibility_date=app_settings.SUBSIDY_ESI_COMPATIBILITY_DATE,
         ua_appname=__title__,
         ua_version=__version__,
+        spec_file=str(ESI_OPENAPI_SPEC_FILE),
         tags=["Contracts"],
     ).client
 
@@ -72,9 +85,10 @@ def _esi_contract_client():
 @lru_cache(maxsize=1)
 def _esi_universe_client():
     return ESIClientProvider(
-        compatibility_date=timezone.now().date(),
+        compatibility_date=app_settings.SUBSIDY_ESI_COMPATIBILITY_DATE,
         ua_appname=__title__,
         ua_version=__version__,
+        spec_file=str(ESI_OPENAPI_SPEC_FILE),
         tags=["Universe"],
     ).client
 
