@@ -3,6 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from celery import shared_task
+from django.core.exceptions import FieldDoesNotExist
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -114,6 +115,26 @@ def _effective_corporation_id(corporation_id: int | None) -> int:
     if normalized in (None, 0, 1):
         return DEFAULT_SUBSIDY_CORPORATION_ID
     return int(normalized)
+
+
+def _save_optional_model_field(instance, field_name: str, value) -> bool:
+    meta = getattr(instance, "_meta", None)
+    if meta is None:
+        return False
+
+    try:
+        field = meta.get_field(field_name)
+    except FieldDoesNotExist:
+        return False
+
+    if not getattr(field, "concrete", False):
+        return False
+    if getattr(field, "many_to_many", False) or getattr(field, "primary_key", False):
+        return False
+
+    setattr(instance, field_name, value)
+    instance.save(update_fields=[field_name])
+    return True
 
 
 def _placeholder_eve_item_type(type_id: int) -> EveItemType:
@@ -916,8 +937,12 @@ def _sync_corporate_contracts_via_esi(corporation_id: int, *, force_refresh: boo
         force_refresh=force_refresh,
     )
 
-    audit_corp.last_update_contracts = timezone.now()
-    audit_corp.save(update_fields=["last_update_contracts"])
+    contract_sync_time = timezone.now()
+    if not _save_optional_model_field(audit_corp, "last_update_contracts", contract_sync_time):
+        logger.debug(
+            "Skipping CorporationAudit contract timestamp update for corporation %s: no concrete last_update_contracts field.",
+            corporation_id,
+        )
 
     logger.info(
         "Direct ESI contract sync completed for corporation %s: %s contracts, %s contracts with items, %s item rows, %s item failures.",

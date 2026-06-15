@@ -1,7 +1,8 @@
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
+from django.core.exceptions import FieldDoesNotExist
 from django.test import SimpleTestCase
 
 from aasubsidy import tasks
@@ -52,3 +53,33 @@ class TestEsiClientBootstrap(SimpleTestCase):
         for path_item in spec["paths"].values():
             for operation in path_item.values():
                 self.assertTrue(operation.get("x-aasubsidy-operation"))
+
+
+class TestOptionalModelFieldSave(SimpleTestCase):
+    def test_saves_when_field_is_concrete(self):
+        field = Mock(concrete=True, many_to_many=False, primary_key=False)
+        audit = Mock()
+        audit._meta.get_field.return_value = field
+
+        result = tasks._save_optional_model_field(
+            audit,
+            "last_update_contracts",
+            "2026-06-15T12:00:00Z",
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(audit.last_update_contracts, "2026-06-15T12:00:00Z")
+        audit.save.assert_called_once_with(update_fields=["last_update_contracts"])
+
+    def test_skips_when_field_is_missing(self):
+        audit = Mock()
+        audit._meta.get_field.side_effect = FieldDoesNotExist("last_update_contracts")
+
+        result = tasks._save_optional_model_field(
+            audit,
+            "last_update_contracts",
+            "2026-06-15T12:00:00Z",
+        )
+
+        self.assertFalse(result)
+        audit.save.assert_not_called()
