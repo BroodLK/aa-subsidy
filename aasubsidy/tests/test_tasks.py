@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
@@ -42,3 +44,11 @@ class TestEsiClientBootstrap(SimpleTestCase):
             spec_file=str(tasks.ESI_OPENAPI_SPEC_FILE),
             tags=["Universe"],
         )
+
+    def test_bundled_spec_sets_extensions_on_all_operations(self):
+        with Path(tasks.ESI_OPENAPI_SPEC_FILE).open(encoding="utf-8") as fp:
+            spec = json.load(fp)
+
+        for path_item in spec["paths"].values():
+            for operation in path_item.values():
+                self.assertTrue(operation.get("x-aasubsidy-operation"))

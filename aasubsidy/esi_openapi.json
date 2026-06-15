@@ -24,6 +24,7 @@
         "tags": [
           "Contracts"
         ],
+        "x-aasubsidy-operation": true,
         "parameters": [
           {
             "name": "corporation_id",
@@ -70,6 +71,7 @@
         "tags": [
           "Contracts"
         ],
+        "x-aasubsidy-operation": true,
         "parameters": [
           {
             "name": "corporation_id",
@@ -115,6 +117,7 @@
         "tags": [
           "Universe"
         ],
+        "x-aasubsidy-operation": true,
         "parameters": [
           {
             "name": "category_id",
@@ -145,6 +148,7 @@
         "tags": [
           "Universe"
         ],
+        "x-aasubsidy-operation": true,
         "parameters": [
           {
             "name": "group_id",
@@ -175,6 +179,7 @@
         "tags": [
           "Universe"
         ],
+        "x-aasubsidy-operation": true,
         "parameters": [
           {
             "name": "type_id",
